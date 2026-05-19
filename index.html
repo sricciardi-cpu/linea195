@@ -253,6 +253,51 @@
       letter-spacing: 0.5px; font-weight: 600;
     }
 
+    .toggle-stops {
+      width: calc(100% - 32px); margin: 12px 16px 0;
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--text); border-radius: 12px; padding: 11px 14px;
+      font-size: 13px; font-weight: 600;
+      cursor: pointer; display: flex; align-items: center; gap: 10px;
+      font-family: inherit;
+    }
+    .toggle-stops:active { background: var(--surface-2); }
+    .toggle-stops .toggle-arrow { margin-left: auto; transition: transform 0.2s; color: var(--muted); }
+    .toggle-stops.open .toggle-arrow { transform: rotate(180deg); }
+
+    .intermediate-list {
+      display: none;
+      margin: 8px 16px 0;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; overflow: hidden;
+    }
+    .intermediate-list.open { display: block; }
+    .interm-row {
+      display: grid; grid-template-columns: 24px 1fr 60px;
+      gap: 10px; align-items: center;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .interm-row:last-child { border-bottom: none; }
+    .interm-row.from { background: rgba(16,185,129,0.08); }
+    .interm-row.to { background: rgba(239,68,68,0.08); }
+    .interm-marker {
+      width: 14px; height: 14px; border-radius: 50%;
+      background: var(--border); border: 2px solid var(--bg-2);
+      margin-left: 5px; position: relative;
+    }
+    .interm-row.from .interm-marker { background: var(--green); }
+    .interm-row.to .interm-marker { background: var(--red); }
+    .interm-name { font-size: 13px; font-weight: 500; }
+    .interm-row.from .interm-name, .interm-row.to .interm-name { font-weight: 700; }
+    .interm-name small { color: var(--muted); font-size: 10px; }
+    .interm-time {
+      font-size: 13px; font-weight: 700;
+      color: var(--amber); text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .interm-row.from .interm-time, .interm-row.to .interm-time { color: var(--text); }
+
     .day-sep {
       display: flex; align-items: center; gap: 10px;
       margin: 14px 16px 6px;
@@ -464,6 +509,13 @@
     <button class="hero-chip share-chip" id="share-btn" onclick="shareTrip()">📤 Compartir</button>
   </div>
 </div>
+
+<button class="toggle-stops" id="toggle-stops-btn" onclick="toggleIntermediateStops()">
+  <span id="toggle-stops-icon">📍</span>
+  <span id="toggle-stops-label">Ver paradas en el camino</span>
+  <span class="toggle-arrow" id="toggle-stops-arrow">▼</span>
+</button>
+<div class="intermediate-list" id="intermediate-list"></div>
 
 <div class="section-head">
   <div class="section-title">
@@ -1114,6 +1166,66 @@ function tick() {
   const data = collect24h();
   renderHero(data.trips);
   renderFeed(data);
+  renderIntermediateStops(data.trips);
+}
+
+// ── Intermediate stops along the route ──
+let intermediateOpen = false;
+
+function toggleIntermediateStops() {
+  intermediateOpen = !intermediateOpen;
+  const btn = document.getElementById('toggle-stops-btn');
+  const list = document.getElementById('intermediate-list');
+  const lbl = document.getElementById('toggle-stops-label');
+  btn.className = 'toggle-stops' + (intermediateOpen ? ' open' : '');
+  list.className = 'intermediate-list' + (intermediateOpen ? ' open' : '');
+  lbl.textContent = intermediateOpen ? 'Ocultar paradas en el camino' : 'Ver paradas en el camino';
+}
+
+function renderIntermediateStops(trips) {
+  const list = document.getElementById('intermediate-list');
+  if (!intermediateOpen || !trips.length || !fromStopId || !toStopId) {
+    list.innerHTML = '';
+    return;
+  }
+  const next = trips[0];
+  const ramal = DATA.ramales[next.ramal];
+  if (!ramal || !ramal[currentDir]) { list.innerHTML = ''; return; }
+
+  const stops = ramal[currentDir].stops;
+  const offsets = ramal[currentDir].offsets;
+  const fromIdx = stops.indexOf(fromStopId);
+  const toIdx = stops.indexOf(toStopId);
+  if (fromIdx === -1 || toIdx === -1 || fromIdx >= toIdx) {
+    list.innerHTML = '';
+    return;
+  }
+
+  // Compute trip's first-stop departure time so we can apply offsets
+  const fromOffset = offsets[fromIdx];
+  const fromTimeMin = pMin(next.fromTime);
+  const firstDepMin = fromTimeMin - fromOffset;
+
+  list.innerHTML = '';
+  for (let i = fromIdx; i <= toIdx; i++) {
+    const sid = stops[i];
+    const name = DATA.stops[sid]?.name || sid;
+    const arrMin = firstDepMin + offsets[i];
+    const arrHHMM = `${pad2(((Math.floor(arrMin/60)) % 24 + 24) % 24)}:${pad2(((arrMin % 60) + 60) % 60)}`;
+    const isFrom = i === fromIdx;
+    const isTo = i === toIdx;
+    const cls = isFrom ? 'from' : isTo ? 'to' : '';
+    const offFromUser = offsets[i] - fromOffset;
+    const meta = isFrom ? ' (subo)' : isTo ? ' (bajo)' : ` <small>+${offFromUser}min</small>`;
+    const row = document.createElement('div');
+    row.className = 'interm-row ' + cls;
+    row.innerHTML = `
+      <div class="interm-marker"></div>
+      <div class="interm-name">${name}${meta}</div>
+      <div class="interm-time">${arrHHMM}</div>
+    `;
+    list.appendChild(row);
+  }
 }
 
 // ── Load ──
