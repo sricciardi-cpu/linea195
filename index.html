@@ -8,6 +8,10 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="L195" />
   <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="64x64" href="favicon.png" />
+  <link rel="icon" href="favicon.ico" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
   <title>Línea 195 · Metropol</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -527,6 +531,26 @@ let fromStopId = null;
 let toStopId = null;
 let stopPickerMode = null; // 'from' | 'to'
 
+// ── Persistence (localStorage) ──
+const STORAGE_KEY = 'linea195-prefs-v1';
+function savePrefs() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      currentDir,
+      ramales: Array.from(selectedRamales),
+      fromStopId,
+      toStopId,
+    }));
+  } catch (e) { /* ignore */ }
+}
+function loadPrefs() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (e) { return null; }
+}
+
 // ── Helpers ──
 function nowMin() {
   const n = new Date();
@@ -928,6 +952,7 @@ function updateClock() {
 }
 function tick() {
   updateClock();
+  savePrefs(); // persist on every tick (cheap)
   const data = collect24h();
   renderHero(data.trips);
   renderFeed(data);
@@ -938,9 +963,35 @@ fetch('stops.json')
   .then(r => r.json())
   .then(d => {
     DATA = d;
-    // Set defaults
-    const [a, b] = getDefaultStops();
-    fromStopId = a; toStopId = b;
+
+    // Try to restore previous selection
+    const prefs = loadPrefs();
+    if (prefs) {
+      if (prefs.currentDir === 'ida' || prefs.currentDir === 'vuelta') {
+        currentDir = prefs.currentDir;
+        document.getElementById('btn-ida').className = 'dir-btn' + (currentDir==='ida'?' active':'');
+        document.getElementById('btn-vuelta').className = 'dir-btn' + (currentDir==='vuelta'?' active':'');
+      }
+      if (Array.isArray(prefs.ramales) && prefs.ramales.length) {
+        const valid = prefs.ramales.filter(r => DATA.ramales[r]);
+        if (valid.length) selectedRamales = new Set(valid);
+      }
+    }
+
+    // Validate stored stops against current direction + ramales
+    if (prefs?.fromStopId && prefs?.toStopId) {
+      const validStops = new Set(getStopsForDirection().map(s => s.id));
+      if (validStops.has(prefs.fromStopId) && validStops.has(prefs.toStopId)) {
+        fromStopId = prefs.fromStopId;
+        toStopId = prefs.toStopId;
+      }
+    }
+    if (!fromStopId || !toStopId) {
+      const [a, b] = getDefaultStops();
+      fromStopId = a; toStopId = b;
+    }
+
+    document.getElementById('fab-count').textContent = selectedRamales.size;
     renderStopBox();
     tick();
     setInterval(tick, 20000);
