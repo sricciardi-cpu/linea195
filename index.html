@@ -325,6 +325,17 @@
       border-radius: 10px; padding: 8px 12px;
       display: flex; align-items: center; gap: 8px;
     }
+    .locate-btn {
+      margin: 6px 16px 4px; padding: 9px 12px;
+      background: var(--surface); border: 1px solid var(--accent);
+      color: var(--accent-light); border-radius: 10px;
+      font-size: 12px; font-weight: 600; cursor: pointer;
+      font-family: inherit; text-align: left;
+      display: flex; align-items: center; gap: 6px;
+      transition: all 0.15s;
+    }
+    .locate-btn:active { background: rgba(59,130,246,0.15); }
+    .locate-btn.loading { opacity: 0.6; }
     .sheet-search input {
       flex: 1; background: transparent; border: none; outline: none;
       color: var(--text); font-family: inherit; font-size: 14px;
@@ -496,6 +507,9 @@
       <span style="color:var(--muted)">🔍</span>
       <input id="stop-search" placeholder="Buscar parada..." oninput="filterStops()" />
     </div>
+    <button class="locate-btn" id="locate-btn" onclick="useNearestStop()">
+      📍 Usar parada más cercana a mí
+    </button>
     <div class="stop-list" id="stop-list"></div>
   </div>
 </div>
@@ -867,11 +881,70 @@ function openStopSheet(mode) {
     ? 'Elegí dónde vas a tomar el bus'
     : 'Elegí dónde te bajás';
   document.getElementById('stop-search').value = '';
+  const lb = document.getElementById('locate-btn');
+  lb.classList.remove('loading');
+  lb.textContent = '📍 Usar parada más cercana a mí';
   renderStopList();
   document.getElementById('stop-sheet-bg').className = 'sheet-bg open';
 }
 
 function filterStops() { renderStopList(); }
+
+// ── Geolocation: find nearest stop ──
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371; // km
+  const dLat = (lat2-lat1) * Math.PI/180;
+  const dLon = (lon2-lon1) * Math.PI/180;
+  const a = Math.sin(dLat/2)**2 +
+    Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) *
+    Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function useNearestStop() {
+  if (!navigator.geolocation) {
+    alert('Tu navegador no soporta geolocalización.');
+    return;
+  }
+  const btn = document.getElementById('locate-btn');
+  btn.classList.add('loading');
+  btn.textContent = '📍 Buscando ubicación...';
+
+  navigator.geolocation.getCurrentPosition((pos) => {
+    const { latitude, longitude } = pos.coords;
+    const stops = getStopsForDirection();
+    let nearest = null;
+    let minDist = Infinity;
+    for (const s of stops) {
+      const info = DATA.stops[s.id];
+      if (!info || !info.lat || !info.lon) continue;
+      const d = haversine(latitude, longitude, info.lat, info.lon);
+      if (d < minDist) { minDist = d; nearest = s; }
+    }
+    btn.classList.remove('loading');
+    if (nearest) {
+      const distTxt = minDist < 1
+        ? `${Math.round(minDist * 1000)}m`
+        : `${minDist.toFixed(1)}km`;
+      btn.textContent = `✓ ${nearest.name} (${distTxt})`;
+      if (stopPickerMode === 'from') fromStopId = nearest.id;
+      else toStopId = nearest.id;
+      setTimeout(() => {
+        closeSheet('stop');
+        renderStopBox();
+        tick();
+      }, 600);
+    } else {
+      btn.textContent = '⚠️ No se encontró parada cercana';
+    }
+  }, (err) => {
+    btn.classList.remove('loading');
+    btn.textContent = '📍 Usar parada más cercana a mí';
+    let msg = 'No pudimos obtener tu ubicación.';
+    if (err.code === 1) msg = 'Permiso de ubicación denegado.';
+    alert(msg);
+  }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+}
 
 function swapStops() {
   // Flip direction first to keep stop validity (each direction has its own stop pattern)
