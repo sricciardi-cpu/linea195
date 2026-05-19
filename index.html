@@ -337,38 +337,51 @@ function render() {
   const all = collectTrips();
   const now = nowMin();
 
-  // Find next departures (with overnight wrap)
-  const upcoming = [];
-  for (const t of all) {
-    let diff = pMin(t.dep) - now;
-    if (diff < -90) diff += 1440;
-    if (diff >= -2) upcoming.push({ ...t, diff: Math.max(0, diff) });
-    if (upcoming.length >= 8) break;
-  }
+  // Build upcoming list of trips that STILL HAVEN'T LEFT TODAY
+  // (diff = minutes from now; only keep trips with diff >= -2)
+  const todayUpcoming = all
+    .map(t => ({ ...t, diff: pMin(t.dep) - now }))
+    .filter(t => t.diff >= -2)
+    .sort((a, b) => a.diff - b.diff)
+    .map(t => ({ ...t, diff: Math.max(0, t.diff) }));
+
+  const upcoming = todayUpcoming.slice(0, 8);
+  // If no more trips today, optionally show tomorrow's first as a hint
+  let tomorrowFirst = null;
   if (upcoming.length === 0 && all.length > 0) {
     const t = all[0];
-    upcoming.push({ ...t, diff: (pMin(t.dep) + 1440 - now) % 1440 });
+    tomorrowFirst = { ...t, diff: (pMin(t.dep) + 1440 - now) };
   }
 
   // Next card
   const card = document.getElementById('next-card');
-  if (upcoming.length > 0) {
-    const n = upcoming[0];
+  const tEl = document.getElementById('next-time');
+  const n = upcoming[0] || tomorrowFirst;
+  if (n) {
     document.getElementById('next-ramal').textContent = n.ramal + ' · ' + RAMAL_INFO[n.ramal].desc;
     document.getElementById('next-time').textContent = n.dep;
     document.getElementById('next-arr').textContent = n.arr;
     document.getElementById('next-dur').textContent = n.dur;
-    document.getElementById('next-wait').textContent = n.diff === 0 ? '¡saliendo!' : fmtWait(n.diff);
+
+    const isTomorrow = !upcoming.length;
+    document.getElementById('next-wait').textContent =
+      isTomorrow ? `mañana (en ${fmtWait(n.diff)})` :
+      n.diff === 0 ? '¡saliendo!' : fmtWait(n.diff);
 
     card.className = 'next-card';
-    if (n.diff <= 5) card.classList.add('very-soon');
-    else if (n.diff <= 15) card.classList.add('soon');
-
-    const tEl = document.getElementById('next-time');
-    if (n.diff <= 5) tEl.classList.add('pulse'); else tEl.classList.remove('pulse');
+    if (!isTomorrow) {
+      if (n.diff <= 5) card.classList.add('very-soon');
+      else if (n.diff <= 15) card.classList.add('soon');
+    }
+    if (!isTomorrow && n.diff <= 5) tEl.classList.add('pulse'); else tEl.classList.remove('pulse');
   } else {
+    document.getElementById('next-ramal').textContent = '—';
     document.getElementById('next-time').textContent = '—';
+    document.getElementById('next-arr').textContent = '—';
+    document.getElementById('next-dur').textContent = '—';
     document.getElementById('next-wait').textContent = 'Sin servicios';
+    card.className = 'next-card';
+    tEl.classList.remove('pulse');
   }
 
   // Upcoming list
@@ -394,22 +407,22 @@ function render() {
     });
   }
 
-  // Full grid
+  // Full grid — TODAY's complete schedule, no wrap-around
   const rowsEl = document.getElementById('full-rows');
   rowsEl.innerHTML = '';
   if (all.length === 0) {
     rowsEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--muted)">Sin servicios para los ramales seleccionados</div>`;
   } else {
     all.forEach(t => {
-      let diff = pMin(t.dep) - now;
-      if (diff < -90) diff += 1440;
+      const diff = pMin(t.dep) - now; // pure today-based diff
       const passed = diff < -2;
       const current = diff >= -2 && diff <= 2;
       const row = document.createElement('div');
       row.className = 'grid-row' + (passed?' passed':'') + (current?' current':'');
       let wait = '';
       if (current) wait = '→ ahora';
-      else if (!passed) wait = fmtWait(diff) || '';
+      else if (passed) wait = 'ya pasó';
+      else wait = fmtWait(diff) || '';
       row.innerHTML = `
         <div class="ramal-tag">${t.ramal.replace('195','')}</div>
         <div class="dep">${t.dep}</div>
