@@ -189,7 +189,13 @@
       background: rgba(0,0,0,0.25); border-radius: 8px;
       padding: 5px 10px; font-size: 11px; font-weight: 600;
       display: flex; align-items: center; gap: 4px;
+      color: inherit; border: none; font-family: inherit;
     }
+    .share-chip {
+      cursor: pointer; background: rgba(255,255,255,0.15);
+      transition: background 0.15s;
+    }
+    .share-chip:active { background: rgba(255,255,255,0.3); }
 
     /* ── Section ── */
     .section-head {
@@ -444,6 +450,7 @@
     <div class="hero-chip">🚌 <span id="hero-ramal">—</span></div>
     <div class="hero-chip">⏱ <span id="hero-dur">—</span> min en bus</div>
     <div class="hero-chip" id="hero-day">Hoy</div>
+    <button class="hero-chip share-chip" id="share-btn" onclick="shareTrip()">📤 Compartir</button>
   </div>
 </div>
 
@@ -867,8 +874,86 @@ function openStopSheet(mode) {
 function filterStops() { renderStopList(); }
 
 function swapStops() {
-  const tmp = fromStopId; fromStopId = toStopId; toStopId = tmp;
+  // Flip direction first to keep stop validity (each direction has its own stop pattern)
+  currentDir = currentDir === 'ida' ? 'vuelta' : 'ida';
+  document.getElementById('btn-ida').className = 'dir-btn' + (currentDir==='ida'?' active':'');
+  document.getElementById('btn-vuelta').className = 'dir-btn' + (currentDir==='vuelta'?' active':'');
+
+  // Try to find equivalent reversed stops in the new direction
+  const newStops = getStopsForDirection();
+  const newStopIds = new Set(newStops.map(s => s.id));
+  const oldFrom = fromStopId, oldTo = toStopId;
+
+  // Swap intent: previous "from" becomes new "to", previous "to" becomes new "from"
+  // BUT the GTFS may use different stop IDs for opposite-direction stops at the same geographic location
+  // So we use names/coordinates as a heuristic
+  const oldFromName = DATA.stops[oldFrom]?.name;
+  const oldToName = DATA.stops[oldTo]?.name;
+
+  function findClosest(name) {
+    if (!name) return null;
+    // Direct match in new direction
+    for (const s of newStops) {
+      if (s.name === name) return s.id;
+    }
+    // Strip emoji and compare
+    const clean = name.replace(/^[🚉🏛️]\s*/, '');
+    for (const s of newStops) {
+      if (s.name.replace(/^[🚉🏛️]\s*/, '') === clean) return s.id;
+    }
+    return null;
+  }
+
+  const newFrom = findClosest(oldToName);
+  const newTo = findClosest(oldFromName);
+
+  if (newFrom && newTo) {
+    fromStopId = newFrom;
+    toStopId = newTo;
+  } else {
+    // Fallback to terminals of the new direction
+    const [a, b] = getDefaultStops();
+    fromStopId = a; toStopId = b;
+  }
+
   renderStopBox(); tick();
+}
+
+// ── Share trip ──
+async function shareTrip() {
+  if (!fromStopId || !toStopId || !DATA) return;
+  const data = collect24h();
+  if (!data.trips.length) {
+    alert('No hay servicios para compartir.');
+    return;
+  }
+  const t = data.trips[0];
+  const fromName = DATA.stops[fromStopId].name.replace(/^[🚉🏛️]\s*/, '');
+  const toName = DATA.stops[toStopId].name.replace(/^[🚉🏛️]\s*/, '');
+  const dirLabel = currentDir === 'ida' ? 'Capital → La Plata' : 'La Plata → Capital';
+  const text =
+    `🚌 Línea 195 (${dirLabel})\n` +
+    `Próximo: ${t.fromTime} → ${t.toTime} (${t.dur} min en bus)\n` +
+    `Ramal: ${t.ramal}\n` +
+    `Sube: ${fromName}\n` +
+    `Baja: ${toName}\n\n` +
+    `Ver más: https://linea195.vercel.app`;
+
+  if (navigator.share) {
+    try { await navigator.share({ text, title: 'Línea 195' }); } catch (e) {}
+  } else if (navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text);
+      const btn = document.getElementById('share-btn');
+      if (btn) {
+        const orig = btn.textContent;
+        btn.textContent = '✓ Copiado';
+        setTimeout(() => btn.textContent = orig, 1500);
+      }
+    } catch (e) { alert(text); }
+  } else {
+    alert(text);
+  }
 }
 
 // ── Ramal sheet ──
