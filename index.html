@@ -283,9 +283,12 @@
       font-size: 12px; color: var(--muted); margin-bottom: 16px;
     }
     .ramal-grid {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+      display: grid; grid-template-columns: 1fr; gap: 8px;
       margin-bottom: 14px;
     }
+    .ramal-card { flex-direction: row; align-items: center; gap: 12px; }
+    .ramal-card .rc-name { flex-shrink: 0; min-width: 50px; }
+    .ramal-card .rc-info { flex: 1; display: flex; flex-direction: column; gap: 1px; }
     .ramal-card {
       background: var(--surface); border: 1px solid var(--border);
       border-radius: 12px; padding: 11px 12px;
@@ -444,7 +447,6 @@
     <div class="ramal-grid" id="ramal-grid"></div>
     <div class="sheet-actions">
       <button class="sheet-btn" onclick="selectAllRamales()">Todos</button>
-      <button class="sheet-btn" onclick="selectFastRamales()">⚡ Solo expresos</button>
       <button class="sheet-btn primary" onclick="closeSheet()">Listo</button>
     </div>
   </div>
@@ -454,18 +456,14 @@
 <div class="modal-bg" id="modal" onclick="if(event.target===this)closeInfo()">
   <div class="modal">
     <h3>🚌 Ramales de la 195</h3>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:12px">Sólo se muestran los 3 recorridos publicados en la web oficial de La Nueva Metropol.</p>
     <ul>
-      <li><strong>195A</strong> — x Av. Mitre + Centenario. ~132 min. El más lento, pocos servicios.</li>
-      <li><strong>195B / C</strong> — x Autopista (regular). ~97 min. Frecuente en día hábil.</li>
-      <li><strong>195D</strong> — x Autopista + Circunvalación 72. ~138 min.</li>
-      <li><strong>195E</strong> — Pza. Constitución x Autopista. ~82 min.</li>
-      <li><strong>195F</strong> — Liniers x Autopista. ~102 min.</li>
-      <li><strong>195G</strong> — ⚡ Expreso Retiro Belgrano Norte. ~59 min, solo día hábil.</li>
-      <li><strong>195H</strong> — ⚡ Expreso x Autopista. ~59 min, el más frecuente.</li>
-      <li><strong>195I</strong> — ⚡ Expreso Constitución. ~42 min, solo día hábil.</li>
+      <li><strong>195B</strong> — Retiro ↔ La Plata por Autopista. ~97 min.</li>
+      <li><strong>195C</strong> — Retiro ↔ La Plata por Autopista (vía Diagonal en La Plata). ~97 min. El más frecuente.</li>
+      <li><strong>195D</strong> — Retiro ↔ La Plata por Autopista + Av. Circunvalación 72. ~138 min.</li>
     </ul>
     <p style="margin-top:12px;font-size:11px;color:var(--muted);line-height:1.5">
-      Casi todos pasan por <strong style="color:var(--text)">Camino Parque Centenario</strong> entre Hudson-Gutiérrez y La Plata.
+      Todos pasan por <strong style="color:var(--text)">Autopista Buenos Aires - La Plata</strong> y <strong style="color:var(--text)">Camino Parque Centenario</strong> entre Hudson-Gutiérrez y La Plata.
       Datos del GTFS oficial de BA Data.
     </p>
     <button class="modal-close" onclick="closeInfo()">Entendido</button>
@@ -479,20 +477,14 @@
 
 <script>
 const RAMAL_INFO = {
-  '195A': { desc: 'x Mitre/Centenario', tag: 'lento' },
-  '195B': { desc: 'x Autopista',         tag: 'regular' },
-  '195C': { desc: 'x Autopista',         tag: 'regular' },
-  '195D': { desc: 'x Aut. + Circ.',      tag: 'lento' },
-  '195E': { desc: 'Const. x Autop.',     tag: 'regular' },
-  '195F': { desc: 'Liniers x Autop.',    tag: 'lento' },
-  '195G': { desc: 'Expreso Retiro',      tag: 'expreso' },
-  '195H': { desc: 'Expreso x Autop.',    tag: 'expreso' },
-  '195I': { desc: 'Expreso Constit.',    tag: 'expreso' },
+  '195B': { desc: 'x Autopista',           tag: 'regular' },
+  '195C': { desc: 'x Autopista (Diagonal)', tag: 'regular' },
+  '195D': { desc: 'x Aut. + Circunvalación',tag: 'regular' },
 };
 
 let SCHEDULE = null;
 let currentDir = 'ida';
-let selectedRamales = new Set(['195B','195C','195G','195H','195I']);
+let selectedRamales = new Set(['195B','195C','195D']);
 
 // ── Helpers ──
 function nowMin() {
@@ -680,12 +672,12 @@ function renderSheet() {
       freqText = `${trips.length} servicios hoy`;
     }
 
-    const tagEmoji = info.tag === 'expreso' ? '⚡ ' : info.tag === 'lento' ? '🐢 ' : '';
-
     card.innerHTML = `
-      <div class="rc-name">${tagEmoji}${r}</div>
-      <div class="rc-desc">${info.desc}</div>
-      <div class="rc-freq">${freqText}</div>
+      <div class="rc-name">${r}</div>
+      <div class="rc-info">
+        <div class="rc-desc">${info.desc}</div>
+        <div class="rc-freq">${freqText}</div>
+      </div>
     `;
     card.onclick = () => {
       if (selectedRamales.has(r)) {
@@ -702,10 +694,6 @@ function renderSheet() {
 
 function selectAllRamales() {
   selectedRamales = new Set(Object.keys(RAMAL_INFO));
-  renderSheet(); tick();
-}
-function selectFastRamales() {
-  selectedRamales = new Set(['195G','195H','195I']);
   renderSheet(); tick();
 }
 
