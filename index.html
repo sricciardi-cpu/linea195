@@ -625,24 +625,7 @@
   <button class="dir-btn" id="btn-vuelta" onclick="setDir('vuelta')">← La Plata → Capital</button>
 </div>
 
-<div style="position:relative">
-  <div id="map"></div>
-  <div class="map-controls">
-    <button class="map-btn" onclick="centerOnUser()" title="Mi ubicación">📍</button>
-    <button class="map-btn" onclick="fitMapToRoute()" title="Ver todo">🔭</button>
-    <button class="map-btn" id="live-toggle" onclick="toggleLiveLayer()" title="Colectivos en vivo">🚌</button>
-  </div>
-  <div class="live-badge" id="live-badge"><span class="live-dot"></span> Cargando GPS…</div>
-</div>
-
-<div class="live-arrivals" id="live-arrivals">
-  <div class="la-header">
-    <span>🛰️ Llegadas en vivo</span>
-    <span class="la-sub" id="la-stop-name">—</span>
-  </div>
-  <div class="la-list" id="la-list"></div>
-</div>
-
+<!-- 1) Elegí tus paradas -->
 <div class="stops-box">
   <button class="stop-pick" onclick="openStopSheet('from')">
     <div class="stop-icon from">A</div>
@@ -662,6 +645,26 @@
     <div class="stop-chevron">›</div>
   </button>
   <div class="trip-summary" id="trip-summary"></div>
+</div>
+
+<!-- 2) Llegadas en vivo a tu parada (lo principal) -->
+<div class="live-arrivals" id="live-arrivals">
+  <div class="la-header">
+    <span>🛰️ Llegadas en vivo</span>
+    <span class="la-sub" id="la-stop-name">—</span>
+  </div>
+  <div class="la-list" id="la-list"></div>
+</div>
+
+<!-- 3) Mapa (secundario) -->
+<div style="position:relative">
+  <div id="map"></div>
+  <div class="map-controls">
+    <button class="map-btn" onclick="centerOnUser()" title="Mi ubicación">📍</button>
+    <button class="map-btn" onclick="fitMapToRoute()" title="Ver todo">🔭</button>
+    <button class="map-btn" id="live-toggle" onclick="toggleLiveLayer()" title="Colectivos en vivo">🚌</button>
+  </div>
+  <div class="live-badge" id="live-badge"><span class="live-dot"></span> Cargando GPS…</div>
 </div>
 
 <div class="hero" id="hero">
@@ -787,14 +790,20 @@
 
 <script>
 const RAMAL_INFO = {
-  '195B': { desc: 'x Autopista' },
-  '195C': { desc: 'x Autopista (Diagonal)' },
-  '195D': { desc: 'x Aut. + Circunvalación' },
+  '195B': { desc: 'Retiro · x Autopista' },
+  '195C': { desc: 'Retiro · x Autopista (Diagonal)' },
+  '195D': { desc: 'Retiro · x Aut. + Circunvalación' },
+  '195E': { desc: 'Constitución · x Autopista' },
+  '195F': { desc: 'Liniers · x Autopista' },
+  '195G': { desc: 'Expreso · Retiro Belgrano Norte' },
+  '195H': { desc: 'Expreso · x Autopista' },
+  '195I': { desc: 'Expreso · Constitución' },
 };
+const ALL_RAMALES = Object.keys(RAMAL_INFO);
 
 let DATA = null;
 let currentDir = 'ida';
-let selectedRamales = new Set(['195B','195C','195D']);
+let selectedRamales = new Set(ALL_RAMALES);
 let fromStopId = null;
 let toStopId = null;
 let stopPickerMode = null; // 'from' | 'to'
@@ -812,7 +821,7 @@ let liveUpdated = 0;      // timestamp of last successful fetch
 let liveLayerOn = true;   // show buses on map
 
 // ── Persistence (localStorage) ──
-const STORAGE_KEY = 'linea195-prefs-v2';
+const STORAGE_KEY = 'linea195-prefs-v3';
 function savePrefs() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
@@ -943,18 +952,21 @@ function isConnected(fromId, toId) {
 function getDefaultStops() {
   const list = getStopsForDirection();
   if (!list.length) return [null, null];
-  // Origin = first stop (earliest in route, usually covered by all ramales)
-  const origin = list[0].id;
-  // Destination = the LATEST stop covered by 2+ ramales (≈ terminal area),
-  // so the default view shows trips from multiple ramales, not just one.
+  // Origin = among the earliest stops, the one covered by the most ramales
+  // (con 8 ramales hay varias paradas con offset 0; elegimos la más compartida).
+  let origin = list[0];
+  for (const s of list.slice(0, 10)) {
+    if (s.ramales.size > origin.ramales.size) origin = s;
+  }
+  // Destination = the LATEST stop covered by 2+ ramales (≈ terminal area).
   let dest = list[list.length - 1];
   for (let i = list.length - 1; i >= 0; i--) {
-    if (list[i].id !== origin && list[i].ramales.size >= 2) {
+    if (list[i].id !== origin.id && list[i].ramales.size >= 2) {
       dest = list[i];
       break;
     }
   }
-  return [origin, dest.id];
+  return [origin.id, dest.id];
 }
 
 // ── Trip computation ──
@@ -1779,10 +1791,13 @@ function renderLiveBadge(failed) {
 function liveArrivalsForStop(stopId) {
   if (!DATA || !stopId || !liveBuses.length) return [];
   const arrivals = [];
+  const wantDir = currentDir === 'ida' ? 0 : 1;
 
   for (const b of liveBuses) {
     if (!selectedRamales.has(b.ramal)) continue;
     if (typeof b.lat !== 'number' || typeof b.lon !== 'number') continue;
+    // Solo colectivos que van en TU sentido
+    if (b.dir !== undefined && b.dir !== null && Number(b.dir) !== wantDir) continue;
     const rd = DATA.ramales[b.ramal];
     if (!rd || !rd[currentDir]) continue;
     const dirData = rd[currentDir];
@@ -1799,12 +1814,12 @@ function liveArrivalsForStop(stopId) {
     });
 
     // El colectivo tiene que estar sobre el recorrido y todavía no haber pasado
-    if (nearKm > 1.5) continue;        // muy lejos del recorrido (otra dirección u otra calle)
+    if (nearKm > 2.0) continue;        // muy lejos del recorrido (otra calle)
     if (nearIdx >= oi) continue;       // ya pasó tu parada
 
     // ETA = diferencia de offsets (ritmo programado del recorrido)
     const etaMin = dirData.offsets[oi] - dirData.offsets[nearIdx];
-    if (etaMin <= 0 || etaMin > 75) continue;
+    if (etaMin <= 0 || etaMin > 90) continue;
 
     const distKm = haversine(b.lat, b.lon, DATA.stops[stopId].lat, DATA.stops[stopId].lon);
     arrivals.push({ ramal: b.ramal, etaMin, distKm, busId: b.id, speed: b.speed });
