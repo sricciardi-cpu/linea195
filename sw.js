@@ -1,5 +1,5 @@
 // Service Worker — network-first para HTML/JSON, cache-first para assets estáticos
-const CACHE = 'linea195-v10';
+const CACHE = 'linea195-v11';
 
 self.addEventListener('install', e => {
   // Activate this SW immediately, skipping the waiting phase
@@ -25,6 +25,15 @@ self.addEventListener('fetch', e => {
   // Skip the SW entirely for cross-origin requests (map tiles, Leaflet CDN).
   // Let the browser handle them directly — caching tiles would bloat storage.
   if (url.origin !== self.location.origin) {
+    return;
+  }
+
+  // API en vivo (/api/*): siempre red directa, nunca caché.
+  if (url.pathname.startsWith('/api/')) {
+    e.respondWith(fetch(e.request).catch(() =>
+      new Response(JSON.stringify({ ok: false, error: 'offline' }),
+        { status: 503, headers: { 'Content-Type': 'application/json' } })
+    ));
     return;
   }
 

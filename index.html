@@ -141,6 +141,45 @@
       box-shadow: 0 2px 8px rgba(0,0,0,0.4);
     }
     .map-btn:active { background: var(--surface); }
+    .map-btn.off { opacity: 0.4; }
+
+    /* Live bus marker */
+    .bus-live-icon { background: transparent; border: none; }
+    .bus-dot {
+      width: 26px; height: 26px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 15px;
+      background: #10b981; border-radius: 50%;
+      border: 2px solid #fff;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+    }
+
+    /* Live badge (overlay on map) */
+    .live-badge {
+      position: absolute; left: 24px; bottom: 12px; z-index: 400;
+      background: var(--bg-2); border: 1px solid var(--border);
+      border-radius: 16px; padding: 5px 11px;
+      font-size: 11px; font-weight: 700; color: var(--text);
+      display: flex; align-items: center; gap: 6px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+    .live-badge.off { color: var(--muted); }
+    .live-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #10b981; animation: blink 1.6s ease-in-out infinite;
+    }
+    .live-dot.off { background: var(--muted-2); animation: none; }
+
+    /* Live ETA banner */
+    .live-eta {
+      margin: 10px 16px 0;
+      background: linear-gradient(135deg, rgba(16,185,129,0.18), var(--surface));
+      border: 1px solid var(--green);
+      border-radius: 12px; padding: 10px 14px;
+      font-size: 12px; color: var(--text);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .live-eta strong { color: var(--green); }
 
     .stops-box {
       margin: 12px 16px 0;
@@ -541,8 +580,12 @@
   <div class="map-controls">
     <button class="map-btn" onclick="centerOnUser()" title="Mi ubicación">📍</button>
     <button class="map-btn" onclick="fitMapToRoute()" title="Ver todo">🔭</button>
+    <button class="map-btn" id="live-toggle" onclick="toggleLiveLayer()" title="Colectivos en vivo">🚌</button>
   </div>
+  <div class="live-badge" id="live-badge"><span class="live-dot"></span> Cargando GPS…</div>
 </div>
+
+<div class="live-eta" id="live-eta" style="display:none"></div>
 
 <div class="stops-box">
   <button class="stop-pick" onclick="openStopSheet('from')">
@@ -701,6 +744,12 @@ let map = null;
 let stopMarkers = {};
 let userMarker = null;
 let routeLine = null;
+
+// ── Live buses state ──
+let busMarkers = {};      // id -> Leaflet marker
+let liveBuses = [];       // last fetched bus list
+let liveUpdated = 0;      // timestamp of last successful fetch
+let liveLayerOn = true;   // show buses on map
 
 // ── Persistence (localStorage) ──
 const STORAGE_KEY = 'linea195-prefs-v2';
@@ -1589,6 +1638,129 @@ function setStopFromMap(which, id) {
   selectStop(which, id);
 }
 
+// ── LIVE BUSES (GPS en tiempo real vía /api/buses) ──
+async function fetchLiveBuses() {
+  try {
+    const r = await fetch('/api/buses', { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const json = await r.json();
+    if (!json.ok || !Array.isArray(json.buses)) throw new Error('bad payload');
+    liveBuses = json.buses;
+    liveUpdated = Date.now();
+    renderLiveBuses();
+    renderLiveBadge();
+    renderLiveEta();
+  } catch (e) {
+    // Silencioso: si falla, la app sigue con horarios programados
+    renderLiveBadge(true);
+  }
+}
+
+function renderLiveBuses() {
+  if (!map || !liveLayerOn) return;
+
+  // Buses de los ramales seleccionados
+  const shown = liveBuses.filter(b => selectedRamales.has(b.ramal));
+  const seenIds = new Set();
+
+  shown.forEach(b => {
+    if (typeof b.lat !== 'number' || typeof b.lon !== 'number') return;
+    seenIds.add(b.id);
+    const existing = busMarkers[b.id];
+    if (existing) {
+      existing.setLatLng([b.lat, b.lon]);
+    } else {
+      const icon = L.divIcon({
+        className: 'bus-live-icon',
+        html: `<div class="bus-dot">🚌</div>`,
+        iconSize: [26, 26],
+        iconAnchor: [13, 13],
+      });
+      const m = L.marker([b.lat, b.lon], { icon, zIndexOffset: 1000 });
+      m.addTo(map);
+      busMarkers[b.id] = m;
+    }
+    busMarkers[b.id].bindPopup(
+      `<div class="pop-name">🚌 Colectivo ${b.ramal}</div>
+       <div style="font-size:11px;color:#8aa0c2">Velocidad: ${b.speed} km/h</div>
+       <div style="font-size:11px;color:#10b981;margin-top:2px">● En vivo (GPS)</div>`
+    );
+  });
+
+  // Sacar markers de buses que ya no están
+  for (const id of Object.keys(busMarkers)) {
+    if (!seenIds.has(id)) {
+      map.removeLayer(busMarkers[id]);
+      delete busMarkers[id];
+    }
+  }
+}
+
+function renderLiveBadge(failed) {
+  const el = document.getElementById('live-badge');
+  if (!el) return;
+  if (failed && !liveUpdated) {
+    el.innerHTML = `<span class="live-dot off"></span> Sin GPS`;
+    el.className = 'live-badge off';
+    return;
+  }
+  const shown = liveBuses.filter(b => selectedRamales.has(b.ramal));
+  const ageSec = Math.round((Date.now() - liveUpdated) / 1000);
+  const ageTxt = ageSec < 60 ? `hace ${ageSec}s` : `hace ${Math.round(ageSec/60)}min`;
+  el.innerHTML = `<span class="live-dot"></span> ${shown.length} en vivo · ${ageTxt}`;
+  el.className = 'live-badge';
+}
+
+// ETA real: para la parada de origen, busca el colectivo en vivo más cercano
+// que esté ANTES de la parada (aproximándose) y estima el tiempo.
+function renderLiveEta() {
+  const el = document.getElementById('live-eta');
+  if (!el || !fromStopId || !DATA) { if (el) el.style.display = 'none'; return; }
+  const stop = DATA.stops[fromStopId];
+  if (!stop || !stop.lat) { el.style.display = 'none'; return; }
+
+  // Buses de ramales seleccionados, con posición
+  const cand = liveBuses.filter(b =>
+    selectedRamales.has(b.ramal) &&
+    typeof b.lat === 'number' && typeof b.lon === 'number'
+  );
+  if (!cand.length) { el.style.display = 'none'; return; }
+
+  // El más cercano a la parada de origen
+  let nearest = null, minKm = Infinity;
+  for (const b of cand) {
+    const km = haversine(stop.lat, stop.lon, b.lat, b.lon);
+    if (km < minKm) { minKm = km; nearest = b; }
+  }
+  if (!nearest || minKm > 8) { el.style.display = 'none'; return; }
+
+  // ETA aproximada: distancia / velocidad (mínimo 12 km/h para evitar absurdos)
+  const kmh = Math.max(nearest.speed, 12);
+  const etaMin = Math.round(minKm / kmh * 60);
+  const distTxt = minKm < 1 ? `${Math.round(minKm*1000)}m` : `${minKm.toFixed(1)}km`;
+
+  el.style.display = 'flex';
+  el.innerHTML = `
+    <span class="live-dot"></span>
+    <span><strong>${nearest.ramal}</strong> en vivo a ${distTxt} de tu parada
+    · llegaría en ~${etaMin} min</span>
+  `;
+}
+
+function toggleLiveLayer() {
+  liveLayerOn = !liveLayerOn;
+  if (!liveLayerOn) {
+    for (const id of Object.keys(busMarkers)) {
+      map.removeLayer(busMarkers[id]);
+      delete busMarkers[id];
+    }
+  } else {
+    renderLiveBuses();
+  }
+  const btn = document.getElementById('live-toggle');
+  if (btn) btn.classList.toggle('off', !liveLayerOn);
+}
+
 // ── Tick ──
 function updateClock() {
   const n = new Date();
@@ -1601,6 +1773,8 @@ function tick() {
   renderHero(data.trips);
   renderFeed(data);
   renderIntermediateStops(data.trips);
+  // Refrescar info en vivo con los datos ya cacheados (sin red)
+  if (liveUpdated) { renderLiveBadge(); renderLiveEta(); renderLiveBuses(); }
 }
 
 // ── Intermediate stops along the route ──
@@ -1758,6 +1932,10 @@ fetch('stops.json?v=' + Date.now())  // cache bust to avoid stale data
     renderStopBox();
     tick();
     setInterval(tick, 20000);
+
+    // GPS en vivo: primera carga + refresco cada 18s
+    fetchLiveBuses();
+    setInterval(fetchLiveBuses, 18000);
   })
   .catch(err => {
     console.error('Error loading app:', err);
