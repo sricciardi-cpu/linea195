@@ -12,6 +12,10 @@
   <link rel="icon" type="image/png" sizes="64x64" href="favicon.png" />
   <link rel="icon" href="favicon.ico" />
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <title>Línea 195 · Metropol</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -92,6 +96,52 @@
     }
 
     /* ── Stop selectors ── */
+    /* ── Map ── */
+    #map {
+      height: 240px;
+      margin: 12px 16px 0;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      z-index: 1;
+    }
+    .leaflet-popup-content-wrapper {
+      background: var(--bg-2);
+      color: var(--text);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+    }
+    .leaflet-popup-content { margin: 12px 14px; font-family: inherit; }
+    .leaflet-popup-tip { background: var(--bg-2); }
+    .leaflet-container a.leaflet-popup-close-button { color: var(--muted); }
+    .pop-name {
+      font-weight: 700; font-size: 13px; margin-bottom: 8px;
+      line-height: 1.3;
+    }
+    .pop-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .pop-btn {
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--text); border-radius: 8px;
+      padding: 7px 10px; font-size: 12px; font-weight: 600;
+      cursor: pointer; font-family: inherit;
+    }
+    .pop-btn.from { border-color: var(--green); color: var(--green); }
+    .pop-btn.to { border-color: var(--red); color: var(--red); }
+    .pop-btn:active { transform: scale(0.95); }
+    .map-controls {
+      position: absolute; top: 8px; right: 24px;
+      display: flex; flex-direction: column; gap: 6px; z-index: 400;
+    }
+    .map-btn {
+      background: var(--bg-2); border: 1px solid var(--border);
+      color: var(--text); border-radius: 8px;
+      width: 36px; height: 36px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; font-size: 14px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+    .map-btn:active { background: var(--surface); }
+
     .stops-box {
       margin: 12px 16px 0;
       background: var(--surface); border: 1px solid var(--border);
@@ -479,6 +529,14 @@
   <button class="dir-btn" id="btn-vuelta" onclick="setDir('vuelta')">← La Plata → Capital</button>
 </div>
 
+<div style="position:relative">
+  <div id="map"></div>
+  <div class="map-controls">
+    <button class="map-btn" onclick="centerOnUser()" title="Mi ubicación">📍</button>
+    <button class="map-btn" onclick="fitMapToRoute()" title="Ver todo">🔭</button>
+  </div>
+</div>
+
 <div class="stops-box">
   <button class="stop-pick" onclick="openStopSheet('from')">
     <div class="stop-icon from">A</div>
@@ -624,6 +682,12 @@ let selectedRamales = new Set(['195B','195C','195D']);
 let fromStopId = null;
 let toStopId = null;
 let stopPickerMode = null; // 'from' | 'to'
+
+// ── Map state ──
+let map = null;
+let stopMarkers = {};
+let userMarker = null;
+let routeLine = null;
 
 // ── Persistence (localStorage) ──
 const STORAGE_KEY = 'linea195-prefs-v1';
@@ -937,6 +1001,7 @@ function renderStopList() {
       else toStopId = s.id;
       closeSheet('stop');
       renderStopBox();
+      renderMap();
       tick();
     };
     listEl.appendChild(item);
@@ -1005,6 +1070,7 @@ function useNearestStop() {
       setTimeout(() => {
         closeSheet('stop');
         renderStopBox();
+        renderMap();
         tick();
       }, 600);
     } else {
@@ -1062,7 +1128,7 @@ function swapStops() {
     fromStopId = a; toStopId = b;
   }
 
-  renderStopBox(); tick();
+  renderStopBox(); renderMap(); setTimeout(fitMapToRoute, 50); tick();
 }
 
 // ── Share trip ──
@@ -1135,6 +1201,7 @@ function renderRamalSheet() {
       ensureValidStops();
       renderRamalSheet();
       renderStopBox();
+      renderMap();
       tick();
     };
     list.appendChild(item);
@@ -1161,6 +1228,8 @@ function setDir(dir) {
   const [a, b] = getDefaultStops();
   fromStopId = a; toStopId = b;
   renderStopBox();
+  renderMap();
+  setTimeout(fitMapToRoute, 50);
   tick();
 }
 function openSheet(kind) {
@@ -1175,6 +1244,122 @@ function closeSheet(kind) {
 }
 function showInfo() { document.getElementById('modal').className = 'modal-bg open'; }
 function closeInfo() { document.getElementById('modal').className = 'modal-bg'; }
+
+// ── Map ──
+function initMap() {
+  if (map) return;
+  try {
+    map = L.map('map', {
+      zoomControl: true,
+      attributionControl: true,
+    }).setView([-34.789, -58.130], 10); // approx mid-point
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap',
+      maxZoom: 18,
+    }).addTo(map);
+  } catch (e) {
+    console.error('Map init failed:', e);
+  }
+}
+
+function renderMap() {
+  if (!map || !DATA) return;
+
+  // Clear existing markers
+  Object.values(stopMarkers).forEach(m => map.removeLayer(m));
+  stopMarkers = {};
+  if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+
+  const stops = getStopsForDirection();
+  const latLngs = [];
+
+  stops.forEach(s => {
+    const info = DATA.stops[s.id];
+    if (!info || !info.lat || !info.lon) return;
+    const isFrom = s.id === fromStopId;
+    const isTo = s.id === toStopId;
+
+    const color = isFrom ? '#10b981' : isTo ? '#ef4444' : '#3b82f6';
+    const radius = (isFrom || isTo) ? 9 : 5;
+
+    const marker = L.circleMarker([info.lat, info.lon], {
+      radius,
+      fillColor: color,
+      color: '#ffffff',
+      weight: 2,
+      fillOpacity: 0.95,
+    });
+
+    const popupHtml = `
+      <div class="pop-name">${info.name}</div>
+      <div class="pop-actions">
+        <button class="pop-btn from" onclick="setStopFromMap('from','${s.id}')">🟢 Subo acá</button>
+        <button class="pop-btn to" onclick="setStopFromMap('to','${s.id}')">🔴 Bajo acá</button>
+      </div>
+    `;
+    marker.bindPopup(popupHtml, { closeButton: true });
+
+    marker.addTo(map);
+    stopMarkers[s.id] = marker;
+    latLngs.push([info.lat, info.lon]);
+  });
+
+  // Draw a line connecting all stops (route preview)
+  if (latLngs.length >= 2) {
+    routeLine = L.polyline(latLngs, {
+      color: '#60a5fa',
+      weight: 3,
+      opacity: 0.5,
+    }).addTo(map);
+  }
+}
+
+function fitMapToRoute() {
+  if (!map) return;
+  const lls = [];
+  if (fromStopId && DATA?.stops[fromStopId]) {
+    const i = DATA.stops[fromStopId];
+    if (i.lat && i.lon) lls.push([i.lat, i.lon]);
+  }
+  if (toStopId && DATA?.stops[toStopId]) {
+    const i = DATA.stops[toStopId];
+    if (i.lat && i.lon) lls.push([i.lat, i.lon]);
+  }
+  if (lls.length >= 2) {
+    map.fitBounds(lls, { padding: [40, 40] });
+  } else if (routeLine) {
+    map.fitBounds(routeLine.getBounds(), { padding: [20, 20] });
+  }
+}
+
+function centerOnUser() {
+  if (!navigator.geolocation || !map) return;
+  navigator.geolocation.getCurrentPosition((pos) => {
+    const ll = [pos.coords.latitude, pos.coords.longitude];
+    map.setView(ll, 14);
+    if (userMarker) map.removeLayer(userMarker);
+    userMarker = L.circleMarker(ll, {
+      radius: 8,
+      fillColor: '#f59e0b',
+      color: '#ffffff',
+      weight: 3,
+      fillOpacity: 0.95,
+    }).addTo(map);
+    userMarker.bindPopup('📍 Acá estás vos').openPopup();
+  }, (err) => {
+    alert('No pudimos obtener tu ubicación. Permitilo en la configuración del navegador.');
+  }, { enableHighAccuracy: true, timeout: 8000 });
+}
+
+function setStopFromMap(which, id) {
+  if (which === 'from') fromStopId = id;
+  else toStopId = id;
+  if (map) map.closePopup();
+  renderStopBox();
+  renderMap();
+  tick();
+}
 
 // ── Tick ──
 function updateClock() {
@@ -1326,6 +1511,22 @@ fetch('stops.json?v=' + Date.now())  // cache bust to avoid stale data
     }
 
     document.getElementById('fab-count').textContent = selectedRamales.size;
+
+    // Initialize map (may need a microtask for Leaflet to be ready)
+    if (typeof L !== 'undefined') {
+      initMap();
+      renderMap();
+      // Fit map to route + fix sizing once layout settles
+      setTimeout(() => {
+        if (map) map.invalidateSize();
+        if (routeLine) map.fitBounds(routeLine.getBounds(), { padding: [20, 20] });
+      }, 200);
+    } else {
+      // Leaflet didn't load (offline?) — hide map container
+      const mapEl = document.getElementById('map');
+      if (mapEl) mapEl.parentElement.style.display = 'none';
+    }
+
     renderStopBox();
     tick();
     setInterval(tick, 20000);

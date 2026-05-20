@@ -1,5 +1,5 @@
 // Service Worker — network-first para HTML/JSON, cache-first para assets estáticos
-const CACHE = 'linea195-v6';
+const CACHE = 'linea195-v7';
 
 self.addEventListener('install', e => {
   // Activate this SW immediately, skipping the waiting phase
@@ -21,6 +21,12 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
+
+  // Skip the SW entirely for cross-origin requests (map tiles, Leaflet CDN).
+  // Let the browser handle them directly — caching tiles would bloat storage.
+  if (url.origin !== self.location.origin) {
+    return;
+  }
 
   // Network-first for HTML, JSON, and manifest — always try fresh
   const isFresh = e.request.mode === 'navigate' ||
