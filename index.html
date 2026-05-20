@@ -1180,14 +1180,28 @@ function toggleIntermediateStops() {
   btn.className = 'toggle-stops' + (intermediateOpen ? ' open' : '');
   list.className = 'intermediate-list' + (intermediateOpen ? ' open' : '');
   lbl.textContent = intermediateOpen ? 'Ocultar paradas en el camino' : 'Ver paradas en el camino';
+  // Re-render immediately to show stops without waiting for next tick
+  const data = collect24h();
+  renderIntermediateStops(data.trips);
 }
 
 function renderIntermediateStops(trips) {
   const list = document.getElementById('intermediate-list');
-  if (!intermediateOpen || !trips.length || !fromStopId || !toStopId) {
+  const btn = document.getElementById('toggle-stops-btn');
+
+  // Hide entire toggle if we have no valid trip
+  if (!trips.length || !fromStopId || !toStopId) {
+    btn.style.display = 'none';
     list.innerHTML = '';
     return;
   }
+  btn.style.display = '';
+
+  if (!intermediateOpen) {
+    list.innerHTML = '';
+    return;
+  }
+
   const next = trips[0];
   const ramal = DATA.ramales[next.ramal];
   if (!ramal || !ramal[currentDir]) { list.innerHTML = ''; return; }
