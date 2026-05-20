@@ -148,6 +148,13 @@
       border-radius: 14px; overflow: hidden;
       position: relative;
     }
+    .trip-summary {
+      padding: 8px 14px; font-size: 11px; font-weight: 600;
+      border-top: 1px solid var(--border);
+      background: var(--surface-2); color: var(--muted);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .trip-summary.warn { color: var(--amber); }
     .stop-pick {
       display: flex; align-items: center; gap: 12px;
       padding: 12px 14px;
@@ -555,6 +562,7 @@
     </div>
     <div class="stop-chevron">›</div>
   </button>
+  <div class="trip-summary" id="trip-summary"></div>
 </div>
 
 <div class="hero" id="hero">
@@ -690,7 +698,7 @@ let userMarker = null;
 let routeLine = null;
 
 // ── Persistence (localStorage) ──
-const STORAGE_KEY = 'linea195-prefs-v1';
+const STORAGE_KEY = 'linea195-prefs-v2';
 function savePrefs() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
@@ -910,6 +918,37 @@ function renderStopBox() {
   const toName = toStopId && DATA?.stops[toStopId] ? DATA.stops[toStopId].name : '— elegí —';
   document.getElementById('from-name').textContent = fromName;
   document.getElementById('to-name').textContent = toName;
+
+  // Trip summary: show duration + how many ramales cover it
+  const summary = document.getElementById('trip-summary');
+  if (!summary) return;
+  if (!fromStopId || !toStopId || !DATA) {
+    summary.textContent = '';
+    summary.className = 'trip-summary';
+    return;
+  }
+  // compute min trip duration across covering ramales
+  let minDur = Infinity, ramalCount = 0;
+  for (const r of selectedRamales) {
+    const rd = DATA.ramales[r];
+    if (!rd || !rd[currentDir]) continue;
+    const st = rd[currentDir].stops, off = rd[currentDir].offsets;
+    const fi = st.indexOf(fromStopId), ti = st.indexOf(toStopId);
+    if (fi !== -1 && ti !== -1 && fi < ti) {
+      ramalCount++;
+      minDur = Math.min(minDur, off[ti] - off[fi]);
+    }
+  }
+  if (ramalCount === 0) {
+    summary.textContent = '⚠️ Ningún 195 conecta estas dos paradas';
+    summary.className = 'trip-summary warn';
+  } else if (minDur < 8) {
+    summary.textContent = `⚠️ Tramo muy corto · ~${minDur} min en bus · tocá las paradas para cambiar`;
+    summary.className = 'trip-summary warn';
+  } else {
+    summary.textContent = `🚌 Viaje de ~${minDur} min · ${ramalCount} ramal${ramalCount>1?'es':''} disponible${ramalCount>1?'s':''}`;
+    summary.className = 'trip-summary';
+  }
 }
 
 function renderHero(trips) {
