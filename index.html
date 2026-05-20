@@ -774,6 +774,49 @@ function getStopsForDirection() {
     .sort((a, b) => a.avgOffset - b.avgOffset);
 }
 
+// All stops reachable AFTER `originId` on any selected ramal that serves the origin.
+function reachableFrom(originId) {
+  const result = new Set();
+  if (!originId) return result;
+  for (const r of selectedRamales) {
+    const rd = DATA.ramales[r];
+    if (!rd || !rd[currentDir]) continue;
+    const st = rd[currentDir].stops;
+    const oi = st.indexOf(originId);
+    if (oi === -1) continue;
+    for (let i = oi + 1; i < st.length; i++) result.add(st[i]);
+  }
+  return result;
+}
+
+// All stops BEFORE `destId` on any selected ramal that serves the destination.
+function canReach(destId) {
+  const result = new Set();
+  if (!destId) return result;
+  for (const r of selectedRamales) {
+    const rd = DATA.ramales[r];
+    if (!rd || !rd[currentDir]) continue;
+    const st = rd[currentDir].stops;
+    const di = st.indexOf(destId);
+    if (di === -1) continue;
+    for (let i = 0; i < di; i++) result.add(st[i]);
+  }
+  return result;
+}
+
+// True if at least one selected ramal connects from → to (in route order).
+function isConnected(fromId, toId) {
+  if (!fromId || !toId) return false;
+  for (const r of selectedRamales) {
+    const rd = DATA.ramales[r];
+    if (!rd || !rd[currentDir]) continue;
+    const st = rd[currentDir].stops;
+    const fi = st.indexOf(fromId), ti = st.indexOf(toId);
+    if (fi !== -1 && ti !== -1 && fi < ti) return true;
+  }
+  return false;
+}
+
 // Get default stops (first = origin terminal, last = destination terminal)
 function getDefaultStops() {
   const list = getStopsForDirection();
@@ -983,33 +1026,79 @@ function renderFeed(data) {
 
 // ── Stop picker sheet ──
 function renderStopList() {
-  const list = getStopsForDirection();
+  const fullList = getStopsForDirection();
   const search = (document.getElementById('stop-search').value || '').toLowerCase().trim();
   const listEl = document.getElementById('stop-list');
   listEl.innerHTML = '';
+
+  // Context filter (Moovit-style): only show stops that form a valid trip
+  // with the OTHER already-selected stop.
+  let list = fullList;
+  let contextNote = '';
+  if (stopPickerMode === 'to' && fromStopId) {
+    const reach = reachableFrom(fromStopId);
+    list = fullList.filter(s => reach.has(s.id));
+    contextNote = `Destinos a los que llega un 195 desde ${(DATA.stops[fromStopId]?.name||'').replace(/^[🚉🏛️]\s*/,'')}`;
+  } else if (stopPickerMode === 'from' && toStopId) {
+    const reach = canReach(toStopId);
+    list = fullList.filter(s => reach.has(s.id));
+    contextNote = `Paradas desde donde un 195 llega a ${(DATA.stops[toStopId]?.name||'').replace(/^[🚉🏛️]\s*/,'')}`;
+  }
+
+  // Update subtitle with context note
+  const subEl = document.getElementById('stop-sheet-sub');
+  if (contextNote) subEl.textContent = contextNote;
 
   const filtered = search
     ? list.filter(s => s.name.toLowerCase().includes(search))
     : list;
 
-  filtered.forEach((s, idx) => {
+  filtered.forEach((s) => {
     const item = document.createElement('div');
     const selectedId = stopPickerMode === 'from' ? fromStopId : toStopId;
     item.className = 'stop-item' + (s.id === selectedId ? ' active' : '');
     const offsetMin = Math.round(s.avgOffset);
-    const offsetTxt = offsetMin === 0 ? 'inicio' : `${offsetMin}min del inicio`;
+    const offsetTxt = offsetMin === 0 ? 'inicio del recorrido' : `~${offsetMin} min del inicio`;
     const ramalText = Array.from(s.ramales).map(r => r.replace('195','')).join(', ');
     item.innerHTML = `
-      <div class="stop-num">${list.indexOf(s) + 1}</div>
+      <div class="stop-num">${fullList.indexOf(s) + 1}</div>
       <div class="stop-detail">
         <div class="stop-detail-name">${s.name}</div>
-        <div class="stop-detail-meta">${offsetTxt} · ramales: ${ramalText}</div>
+        <div class="stop-detail-meta">${offsetTxt} · ramal ${ramalText}</div>
       </div>
       ${s.id === selectedId ? '<div class="stop-check">✓</div>' : ''}
     `;
     item.onclick = () => {
-      if (stopPickerMode === 'from') fromStopId = s.id;
-      else toStopId = s.id;
+      if (stopPickerMode === 'from') {
+        fromStopId = s.id;
+        // If destination is no longer reachable, auto-fix it
+        if (toStopId && !isConnected(fromStopId, toStopId)) {
+          const reach = [...reachableFrom(fromStopId)];
+          // pick the farthest reachable stop as new destination
+          const stopsList = getStopsForDirection();
+          let best = null, bestOff = -1;
+          for (const st of stopsList) {
+            if (reach.includes(st.id) && st.avgOffset > bestOff) {
+              bestOff = st.avgOffset; best = st.id;
+            }
+          }
+          toStopId = best;
+        }
+      } else {
+        toStopId = s.id;
+        // If origin can't reach this destination, auto-fix it
+        if (fromStopId && !isConnected(fromStopId, toStopId)) {
+          const reach = [...canReach(toStopId)];
+          const stopsList = getStopsForDirection();
+          let best = null, bestOff = Infinity;
+          for (const st of stopsList) {
+            if (reach.includes(st.id) && st.avgOffset < bestOff) {
+              bestOff = st.avgOffset; best = st.id;
+            }
+          }
+          fromStopId = best;
+        }
+      }
       closeSheet('stop');
       renderStopBox();
       renderMap();
@@ -1019,7 +1108,9 @@ function renderStopList() {
   });
 
   if (filtered.length === 0) {
-    listEl.innerHTML = '<div class="empty"><div class="empty-text">Sin resultados.</div></div>';
+    listEl.innerHTML = `<div class="empty"><div class="empty-text">
+      ${search ? 'Sin resultados para tu búsqueda.' : 'No hay paradas compatibles con tu otra selección.'}
+    </div></div>`;
   }
 }
 
@@ -1274,55 +1365,110 @@ function initMap() {
   }
 }
 
+// Get the ordered list of logical stop IDs of the trip segment from→to,
+// using the first selected ramal that connects them.
+function getSegmentStops() {
+  if (!fromStopId || !toStopId) return null;
+  for (const r of selectedRamales) {
+    const rd = DATA.ramales[r];
+    if (!rd || !rd[currentDir]) continue;
+    const st = rd[currentDir].stops;
+    const fi = st.indexOf(fromStopId), ti = st.indexOf(toStopId);
+    if (fi !== -1 && ti !== -1 && fi < ti) {
+      return st.slice(fi, ti + 1);
+    }
+  }
+  return null;
+}
+
 function renderMap() {
   if (!map || !DATA) return;
 
-  // Clear existing markers
+  // Clear existing layers
   Object.values(stopMarkers).forEach(m => map.removeLayer(m));
   stopMarkers = {};
-  if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+  if (routeLine) {
+    if (Array.isArray(routeLine)) routeLine.forEach(l => map.removeLayer(l));
+    else map.removeLayer(routeLine);
+    routeLine = null;
+  }
 
   const stops = getStopsForDirection();
-  const latLngs = [];
+  const fullLatLngs = [];
+  const segment = getSegmentStops();
+  const segmentSet = new Set(segment || []);
+
+  // Compute next trip once (for per-stop ETA in popups)
+  const data = collect24h();
+  const nextTrip = data.trips[0] || null;
 
   stops.forEach(s => {
     const info = DATA.stops[s.id];
     if (!info || !info.lat || !info.lon) return;
     const isFrom = s.id === fromStopId;
     const isTo = s.id === toStopId;
+    const inSegment = segmentSet.has(s.id);
 
-    const color = isFrom ? '#10b981' : isTo ? '#ef4444' : '#3b82f6';
-    const radius = (isFrom || isTo) ? 9 : 5;
+    let color, radius, fillOpacity;
+    if (isFrom) { color = '#10b981'; radius = 10; fillOpacity = 1; }
+    else if (isTo) { color = '#ef4444'; radius = 10; fillOpacity = 1; }
+    else if (inSegment) { color = '#60a5fa'; radius = 6; fillOpacity = 0.95; }
+    else { color = '#3b82f6'; radius = 4; fillOpacity = 0.55; }
 
     const marker = L.circleMarker([info.lat, info.lon], {
-      radius,
-      fillColor: color,
-      color: '#ffffff',
-      weight: 2,
-      fillOpacity: 0.95,
+      radius, fillColor: color, color: '#ffffff', weight: 2, fillOpacity,
     });
+
+    // Context-aware popup: show estimated pass time if it's in the active segment
+    let timeNote = '';
+    if (nextTrip && (isFrom || isTo || inSegment)) {
+      const ramal = DATA.ramales[nextTrip.ramal];
+      if (ramal && ramal[currentDir]) {
+        const rst = ramal[currentDir].stops;
+        const roff = ramal[currentDir].offsets;
+        const si = rst.indexOf(s.id);
+        const fi = rst.indexOf(fromStopId);
+        if (si !== -1 && fi !== -1) {
+          const fromTimeMin = pMin(nextTrip.fromTime);
+          const stopMin = fromTimeMin + (roff[si] - roff[fi]);
+          const hh = `${pad2(((Math.floor(stopMin/60))%24+24)%24)}:${pad2(((stopMin%60)+60)%60)}`;
+          timeNote = `<div style="font-size:11px;color:#f59e0b;margin:4px 0">Próximo bus ~${hh}</div>`;
+        }
+      }
+    }
 
     const popupHtml = `
       <div class="pop-name">${info.name}</div>
+      ${timeNote}
       <div class="pop-actions">
         <button class="pop-btn from" onclick="setStopFromMap('from','${s.id}')">🟢 Subo acá</button>
         <button class="pop-btn to" onclick="setStopFromMap('to','${s.id}')">🔴 Bajo acá</button>
       </div>
     `;
     marker.bindPopup(popupHtml, { closeButton: true });
-
     marker.addTo(map);
     stopMarkers[s.id] = marker;
-    latLngs.push([info.lat, info.lon]);
+    fullLatLngs.push([info.lat, info.lon]);
   });
 
-  // Draw a line connecting all stops (route preview)
-  if (latLngs.length >= 2) {
-    routeLine = L.polyline(latLngs, {
-      color: '#60a5fa',
-      weight: 3,
-      opacity: 0.5,
-    }).addTo(map);
+  routeLine = [];
+  // Faint full route
+  if (fullLatLngs.length >= 2) {
+    routeLine.push(L.polyline(fullLatLngs, {
+      color: '#3b82f6', weight: 2, opacity: 0.25,
+    }).addTo(map));
+  }
+  // Bold highlighted segment (the actual trip)
+  if (segment && segment.length >= 2) {
+    const segLatLngs = segment
+      .map(sid => DATA.stops[sid])
+      .filter(i => i && i.lat && i.lon)
+      .map(i => [i.lat, i.lon]);
+    if (segLatLngs.length >= 2) {
+      routeLine.push(L.polyline(segLatLngs, {
+        color: '#60a5fa', weight: 5, opacity: 0.9,
+      }).addTo(map));
+    }
   }
 }
 
@@ -1339,8 +1485,8 @@ function fitMapToRoute() {
   }
   if (lls.length >= 2) {
     map.fitBounds(lls, { padding: [40, 40] });
-  } else if (routeLine) {
-    map.fitBounds(routeLine.getBounds(), { padding: [20, 20] });
+  } else if (routeLine && routeLine.length) {
+    map.fitBounds(routeLine[0].getBounds(), { padding: [20, 20] });
   }
 }
 
@@ -1363,13 +1509,40 @@ function centerOnUser() {
   }, { enableHighAccuracy: true, timeout: 8000 });
 }
 
-function setStopFromMap(which, id) {
-  if (which === 'from') fromStopId = id;
-  else toStopId = id;
+// Shared stop-selection logic with auto-fix of incompatible pairs.
+function selectStop(which, id) {
+  if (which === 'from') {
+    fromStopId = id;
+    if (toStopId && !isConnected(fromStopId, toStopId)) {
+      // Destination unreachable → pick farthest reachable stop
+      const reach = reachableFrom(fromStopId);
+      const stopsList = getStopsForDirection();
+      let best = null, bestOff = -1;
+      for (const st of stopsList) {
+        if (reach.has(st.id) && st.avgOffset > bestOff) { bestOff = st.avgOffset; best = st.id; }
+      }
+      toStopId = best;
+    }
+  } else {
+    toStopId = id;
+    if (fromStopId && !isConnected(fromStopId, toStopId)) {
+      const reach = canReach(toStopId);
+      const stopsList = getStopsForDirection();
+      let best = null, bestOff = Infinity;
+      for (const st of stopsList) {
+        if (reach.has(st.id) && st.avgOffset < bestOff) { bestOff = st.avgOffset; best = st.id; }
+      }
+      fromStopId = best;
+    }
+  }
   if (map) map.closePopup();
   renderStopBox();
   renderMap();
   tick();
+}
+
+function setStopFromMap(which, id) {
+  selectStop(which, id);
 }
 
 // ── Tick ──
@@ -1530,7 +1703,7 @@ fetch('stops.json?v=' + Date.now())  // cache bust to avoid stale data
       // Fit map to route + fix sizing once layout settles
       setTimeout(() => {
         if (map) map.invalidateSize();
-        if (routeLine) map.fitBounds(routeLine.getBounds(), { padding: [20, 20] });
+        fitMapToRoute();
       }, 200);
     } else {
       // Leaflet didn't load (offline?) — hide map container
