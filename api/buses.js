@@ -40,9 +40,11 @@ export default async function handler(req, res) {
     return;
   }
 
-  // Filtrar línea 195, solo ramales por AUTOPISTA (B a I).
-  // Se excluye el 195A que va por Av. Mitre / Quilmes (no autopista).
-  const RAMAL_RE = /^195[B-I]$/;
+  // Filtrar línea 195 — TODOS los ramales (A-I).
+  // El tag de ramal en el feed GPS no es confiable: los colectivos que están
+  // físicamente en La Plata reportan como "195A". Si filtráramos por ramal
+  // perderíamos cobertura. Mostramos todos los 195 y listo.
+  const RAMAL_RE = /^195[A-I]$/;
   const buses = data
     .filter(v => RAMAL_RE.test(String(v.route_short_name || '').trim().toUpperCase()))
     .map(v => ({

@@ -1732,8 +1732,8 @@ async function fetchLiveBuses() {
 function renderLiveBuses() {
   if (!map || !liveLayerOn) return;
 
-  // Buses de los ramales seleccionados
-  const shown = liveBuses.filter(b => selectedRamales.has(b.ramal));
+  // Mostramos TODOS los colectivos 195 (el tag de ramal del feed no es fiable)
+  const shown = liveBuses;
   const seenIds = new Set();
 
   shown.forEach(b => {
@@ -1777,7 +1777,7 @@ function renderLiveBadge(failed) {
     el.className = 'live-badge off';
     return;
   }
-  const shown = liveBuses.filter(b => selectedRamales.has(b.ramal));
+  const shown = liveBuses;
   const ageSec = Math.round((Date.now() - liveUpdated) / 1000);
   const ageTxt = ageSec < 60 ? `hace ${ageSec}s` : `hace ${Math.round(ageSec/60)}min`;
   el.innerHTML = `<span class="live-dot"></span> ${shown.length} en vivo · ${ageTxt}`;
@@ -1790,35 +1790,44 @@ function renderLiveBadge(failed) {
 // con ETA estimada usando la posición GPS sobre el recorrido.
 function liveArrivalsForStop(stopId) {
   if (!DATA || !stopId || !liveBuses.length) return [];
-  const arrivals = [];
   const wantDir = currentDir === 'ida' ? 0 : 1;
 
-  for (const b of liveBuses) {
-    if (!selectedRamales.has(b.ramal)) continue;
-    if (typeof b.lat !== 'number' || typeof b.lon !== 'number') continue;
-    // Solo colectivos que van en TU sentido
-    if (b.dir !== undefined && b.dir !== null && Number(b.dir) !== wantDir) continue;
-    const rd = DATA.ramales[b.ramal];
+  // Recorrido de referencia: el ramal (en este sentido) con más paradas
+  // que incluya esta parada. Sirve de "regla" para ubicar a los colectivos.
+  let refStops = null, refOffsets = null, refOi = -1;
+  for (const r of Object.keys(DATA.ramales)) {
+    const rd = DATA.ramales[r];
     if (!rd || !rd[currentDir]) continue;
-    const dirData = rd[currentDir];
-    const oi = dirData.stops.indexOf(stopId);
+    const oi = rd[currentDir].stops.indexOf(stopId);
     if (oi === -1) continue;
+    if (!refStops || rd[currentDir].stops.length > refStops.length) {
+      refStops = rd[currentDir].stops;
+      refOffsets = rd[currentDir].offsets;
+      refOi = oi;
+    }
+  }
+  if (!refStops) return [];
 
-    // Parada del recorrido más cercana al colectivo
+  const arrivals = [];
+  for (const b of liveBuses) {
+    if (typeof b.lat !== 'number' || typeof b.lon !== 'number') continue;
+    // Solo colectivos que van en TU sentido (el ramal del feed no es fiable,
+    // pero el campo direction sí lo es)
+    if (b.dir !== undefined && b.dir !== null && Number(b.dir) !== wantDir) continue;
+
+    // Parada del recorrido de referencia más cercana al colectivo
     let nearIdx = -1, nearKm = Infinity;
-    dirData.stops.forEach((sid, i) => {
+    refStops.forEach((sid, i) => {
       const si = DATA.stops[sid];
       if (!si) return;
       const km = haversine(b.lat, b.lon, si.lat, si.lon);
       if (km < nearKm) { nearKm = km; nearIdx = i; }
     });
 
-    // El colectivo tiene que estar sobre el recorrido y todavía no haber pasado
-    if (nearKm > 2.0) continue;        // muy lejos del recorrido (otra calle)
-    if (nearIdx >= oi) continue;       // ya pasó tu parada
+    if (nearKm > 2.5) continue;        // no está sobre este corredor
+    if (nearIdx >= refOi) continue;    // ya pasó tu parada
 
-    // ETA = diferencia de offsets (ritmo programado del recorrido)
-    const etaMin = dirData.offsets[oi] - dirData.offsets[nearIdx];
+    const etaMin = refOffsets[refOi] - refOffsets[nearIdx];
     if (etaMin <= 0 || etaMin > 90) continue;
 
     const distKm = haversine(b.lat, b.lon, DATA.stops[stopId].lat, DATA.stops[stopId].lon);
