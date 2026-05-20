@@ -181,6 +181,48 @@
     }
     .live-eta strong { color: var(--green); }
 
+    /* Live arrivals panel */
+    .live-arrivals {
+      margin: 12px 16px 0;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 14px; overflow: hidden;
+    }
+    .la-header {
+      padding: 11px 14px; background: var(--surface-2);
+      font-size: 12px; font-weight: 700;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 8px;
+    }
+    .la-sub {
+      font-size: 10px; font-weight: 500; color: var(--muted);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      max-width: 55%;
+    }
+    .la-list { display: flex; flex-direction: column; }
+    .la-row {
+      display: grid; grid-template-columns: 44px 1fr auto;
+      gap: 12px; align-items: center;
+      padding: 11px 14px; border-top: 1px solid var(--border);
+    }
+    .la-ramal {
+      width: 36px; height: 36px; border-radius: 9px;
+      background: var(--green); color: #06281d;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 800;
+    }
+    .la-info { display: flex; flex-direction: column; }
+    .la-eta { font-size: 16px; font-weight: 800; }
+    .la-eta small { font-size: 11px; font-weight: 600; color: var(--muted); }
+    .la-dist { font-size: 11px; color: var(--muted); margin-top: 1px; }
+    .la-live {
+      display: flex; align-items: center; gap: 4px;
+      font-size: 10px; font-weight: 700; color: var(--green);
+    }
+    .la-empty {
+      padding: 18px 14px; text-align: center;
+      font-size: 12px; color: var(--muted); line-height: 1.5;
+    }
+
     .stops-box {
       margin: 12px 16px 0;
       background: var(--surface); border: 1px solid var(--border);
@@ -585,7 +627,13 @@
   <div class="live-badge" id="live-badge"><span class="live-dot"></span> Cargando GPS…</div>
 </div>
 
-<div class="live-eta" id="live-eta" style="display:none"></div>
+<div class="live-arrivals" id="live-arrivals">
+  <div class="la-header">
+    <span>🛰️ Llegadas en vivo</span>
+    <span class="la-sub" id="la-stop-name">—</span>
+  </div>
+  <div class="la-list" id="la-list"></div>
+</div>
 
 <div class="stops-box">
   <button class="stop-pick" onclick="openStopSheet('from')">
@@ -1649,7 +1697,8 @@ async function fetchLiveBuses() {
     liveUpdated = Date.now();
     renderLiveBuses();
     renderLiveBadge();
-    renderLiveEta();
+
+    renderLiveArrivals();
   } catch (e) {
     // Silencioso: si falla, la app sigue con horarios programados
     renderLiveBadge(true);
@@ -1713,38 +1762,89 @@ function renderLiveBadge(failed) {
 
 // ETA real: para la parada de origen, busca el colectivo en vivo más cercano
 // que esté ANTES de la parada (aproximándose) y estima el tiempo.
-function renderLiveEta() {
-  const el = document.getElementById('live-eta');
-  if (!el || !fromStopId || !DATA) { if (el) el.style.display = 'none'; return; }
-  const stop = DATA.stops[fromStopId];
-  if (!stop || !stop.lat) { el.style.display = 'none'; return; }
+// Calcula los colectivos en vivo que se están acercando a una parada,
+// con ETA estimada usando la posición GPS sobre el recorrido.
+function liveArrivalsForStop(stopId) {
+  if (!DATA || !stopId || !liveBuses.length) return [];
+  const arrivals = [];
 
-  // Buses de ramales seleccionados, con posición
-  const cand = liveBuses.filter(b =>
-    selectedRamales.has(b.ramal) &&
-    typeof b.lat === 'number' && typeof b.lon === 'number'
-  );
-  if (!cand.length) { el.style.display = 'none'; return; }
+  for (const b of liveBuses) {
+    if (!selectedRamales.has(b.ramal)) continue;
+    if (typeof b.lat !== 'number' || typeof b.lon !== 'number') continue;
+    const rd = DATA.ramales[b.ramal];
+    if (!rd || !rd[currentDir]) continue;
+    const dirData = rd[currentDir];
+    const oi = dirData.stops.indexOf(stopId);
+    if (oi === -1) continue;
 
-  // El más cercano a la parada de origen
-  let nearest = null, minKm = Infinity;
-  for (const b of cand) {
-    const km = haversine(stop.lat, stop.lon, b.lat, b.lon);
-    if (km < minKm) { minKm = km; nearest = b; }
+    // Parada del recorrido más cercana al colectivo
+    let nearIdx = -1, nearKm = Infinity;
+    dirData.stops.forEach((sid, i) => {
+      const si = DATA.stops[sid];
+      if (!si) return;
+      const km = haversine(b.lat, b.lon, si.lat, si.lon);
+      if (km < nearKm) { nearKm = km; nearIdx = i; }
+    });
+
+    // El colectivo tiene que estar sobre el recorrido y todavía no haber pasado
+    if (nearKm > 1.5) continue;        // muy lejos del recorrido (otra dirección u otra calle)
+    if (nearIdx >= oi) continue;       // ya pasó tu parada
+
+    // ETA = diferencia de offsets (ritmo programado del recorrido)
+    const etaMin = dirData.offsets[oi] - dirData.offsets[nearIdx];
+    if (etaMin <= 0 || etaMin > 75) continue;
+
+    const distKm = haversine(b.lat, b.lon, DATA.stops[stopId].lat, DATA.stops[stopId].lon);
+    arrivals.push({ ramal: b.ramal, etaMin, distKm, busId: b.id, speed: b.speed });
   }
-  if (!nearest || minKm > 8) { el.style.display = 'none'; return; }
+  arrivals.sort((a, b) => a.etaMin - b.etaMin);
+  return arrivals;
+}
 
-  // ETA aproximada: distancia / velocidad (mínimo 12 km/h para evitar absurdos)
-  const kmh = Math.max(nearest.speed, 12);
-  const etaMin = Math.round(minKm / kmh * 60);
-  const distTxt = minKm < 1 ? `${Math.round(minKm*1000)}m` : `${minKm.toFixed(1)}km`;
+function renderLiveArrivals() {
+  const panel = document.getElementById('live-arrivals');
+  const listEl = document.getElementById('la-list');
+  const nameEl = document.getElementById('la-stop-name');
+  if (!panel || !DATA) return;
 
-  el.style.display = 'flex';
-  el.innerHTML = `
-    <span class="live-dot"></span>
-    <span><strong>${nearest.ramal}</strong> en vivo a ${distTxt} de tu parada
-    · llegaría en ~${etaMin} min</span>
-  `;
+  if (!fromStopId) {
+    nameEl.textContent = '—';
+    listEl.innerHTML = `<div class="la-empty">Elegí una parada de origen para ver las llegadas.</div>`;
+    return;
+  }
+  nameEl.textContent = (DATA.stops[fromStopId]?.name || '').replace(/^[🚉🏛️]\s*/, '');
+
+  if (!liveUpdated) {
+    listEl.innerHTML = `<div class="la-empty">Cargando GPS de los colectivos…</div>`;
+    return;
+  }
+
+  const arrivals = liveArrivalsForStop(fromStopId).slice(0, 6);
+  if (!arrivals.length) {
+    listEl.innerHTML = `<div class="la-empty">
+      No hay colectivos en vivo acercándose a esta parada ahora mismo.<br>
+      Mirá la lista de horarios programados más abajo. ⬇️
+    </div>`;
+    return;
+  }
+
+  listEl.innerHTML = '';
+  arrivals.forEach(a => {
+    const distTxt = a.distKm < 1
+      ? `${Math.round(a.distKm * 1000)} m`
+      : `${a.distKm.toFixed(1)} km`;
+    const row = document.createElement('div');
+    row.className = 'la-row';
+    row.innerHTML = `
+      <div class="la-ramal">${a.ramal.replace('195','')}</div>
+      <div class="la-info">
+        <div class="la-eta">${a.etaMin} <small>min</small></div>
+        <div class="la-dist">a ${distTxt} · ${a.speed} km/h</div>
+      </div>
+      <div class="la-live"><span class="live-dot"></span>EN VIVO</div>
+    `;
+    listEl.appendChild(row);
+  });
 }
 
 function toggleLiveLayer() {
@@ -1774,7 +1874,8 @@ function tick() {
   renderFeed(data);
   renderIntermediateStops(data.trips);
   // Refrescar info en vivo con los datos ya cacheados (sin red)
-  if (liveUpdated) { renderLiveBadge(); renderLiveEta(); renderLiveBuses(); }
+  if (liveUpdated) { renderLiveBadge(); renderLiveBuses(); }
+  renderLiveArrivals();
 }
 
 // ── Intermediate stops along the route ──

@@ -1,5 +1,5 @@
 // Service Worker — network-first para HTML/JSON, cache-first para assets estáticos
-const CACHE = 'linea195-v11';
+const CACHE = 'linea195-v12';
 
 self.addEventListener('install', e => {
   // Activate this SW immediately, skipping the waiting phase
