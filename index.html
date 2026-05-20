@@ -607,6 +607,8 @@
 <footer>
   Datos: <a href="https://data.buenosaires.gob.ar/dataset/colectivos-gtfs" target="_blank">GTFS BA Data</a>
   · Tiempo real: <a href="https://cuandosubo.sube.gob.ar" target="_blank">Cuando Subo</a>
+  <br>
+  <button onclick="hardReset()" style="margin-top:8px;background:transparent;border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:14px;font-size:10px;cursor:pointer;font-family:inherit">🔄 Resetear app (si algo no anda)</button>
 </footer>
 
 <script>
@@ -1261,34 +1263,63 @@ function renderIntermediateStops(trips) {
   }
 }
 
+// ── Hard reset utility ──
+function hardReset() {
+  if (!confirm('Esto borra tu preferencias y refresca la app. ¿Continuar?')) return;
+  try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+  if ('caches' in window) {
+    caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))))
+      .then(() => {
+        if (navigator.serviceWorker) {
+          navigator.serviceWorker.getRegistrations().then(regs => {
+            regs.forEach(r => r.unregister());
+            location.reload(true);
+          });
+        } else location.reload(true);
+      });
+  } else location.reload(true);
+}
+window.__hardReset = hardReset; // expose for debugging
+
 // ── Load ──
-fetch('stops.json')
-  .then(r => r.json())
+fetch('stops.json?v=' + Date.now())  // cache bust to avoid stale data
+  .then(r => {
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  })
   .then(d => {
+    // Validate data shape
+    if (!d || !d.ramales || !d.stops) {
+      throw new Error('Estructura de datos inválida');
+    }
     DATA = d;
 
-    // Try to restore previous selection
-    const prefs = loadPrefs();
-    if (prefs) {
-      if (prefs.currentDir === 'ida' || prefs.currentDir === 'vuelta') {
-        currentDir = prefs.currentDir;
-        document.getElementById('btn-ida').className = 'dir-btn' + (currentDir==='ida'?' active':'');
-        document.getElementById('btn-vuelta').className = 'dir-btn' + (currentDir==='vuelta'?' active':'');
+    // Robust prefs restore — any error → start fresh
+    try {
+      const prefs = loadPrefs();
+      if (prefs) {
+        if (prefs.currentDir === 'ida' || prefs.currentDir === 'vuelta') {
+          currentDir = prefs.currentDir;
+          document.getElementById('btn-ida').className = 'dir-btn' + (currentDir==='ida'?' active':'');
+          document.getElementById('btn-vuelta').className = 'dir-btn' + (currentDir==='vuelta'?' active':'');
+        }
+        if (Array.isArray(prefs.ramales) && prefs.ramales.length) {
+          const valid = prefs.ramales.filter(r => DATA.ramales[r]);
+          if (valid.length) selectedRamales = new Set(valid);
+        }
+        if (prefs.fromStopId && prefs.toStopId && DATA.stops[prefs.fromStopId] && DATA.stops[prefs.toStopId]) {
+          const validStops = new Set(getStopsForDirection().map(s => s.id));
+          if (validStops.has(prefs.fromStopId) && validStops.has(prefs.toStopId)) {
+            fromStopId = prefs.fromStopId;
+            toStopId = prefs.toStopId;
+          }
+        }
       }
-      if (Array.isArray(prefs.ramales) && prefs.ramales.length) {
-        const valid = prefs.ramales.filter(r => DATA.ramales[r]);
-        if (valid.length) selectedRamales = new Set(valid);
-      }
+    } catch (e) {
+      console.warn('Prefs corruptas, ignorando:', e);
+      try { localStorage.removeItem(STORAGE_KEY); } catch (ee) {}
     }
 
-    // Validate stored stops against current direction + ramales
-    if (prefs?.fromStopId && prefs?.toStopId) {
-      const validStops = new Set(getStopsForDirection().map(s => s.id));
-      if (validStops.has(prefs.fromStopId) && validStops.has(prefs.toStopId)) {
-        fromStopId = prefs.fromStopId;
-        toStopId = prefs.toStopId;
-      }
-    }
     if (!fromStopId || !toStopId) {
       const [a, b] = getDefaultStops();
       fromStopId = a; toStopId = b;
@@ -1300,9 +1331,12 @@ fetch('stops.json')
     setInterval(tick, 20000);
   })
   .catch(err => {
-    document.body.innerHTML = `<div style="padding:40px;text-align:center;color:#fff">
-      <h2>Error cargando datos</h2>
-      <p style="color:#94a3b8;margin-top:10px;font-size:13px">${err.message}</p>
+    console.error('Error loading app:', err);
+    document.body.innerHTML = `<div style="padding:40px;text-align:center;color:#fff;font-family:-apple-system,sans-serif;max-width:480px;margin:0 auto">
+      <h2 style="font-size:18px;margin-bottom:10px">⚠️ Error cargando datos</h2>
+      <p style="color:#94a3b8;margin:10px 0;font-size:13px">${err.message}</p>
+      <button onclick="window.location.reload(true)" style="margin-top:20px;background:#3b82f6;color:#fff;border:none;padding:12px 24px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer">🔄 Reintentar</button>
+      <p style="color:#5a708f;margin-top:20px;font-size:11px">Si persiste, andá a Configuración del navegador → Borrar datos del sitio</p>
     </div>`;
   });
 
