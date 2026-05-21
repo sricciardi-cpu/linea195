@@ -219,17 +219,36 @@
       font-size: 10px; font-weight: 700; color: var(--green);
     }
     .la-empty {
-      padding: 18px 14px; text-align: center;
-      font-size: 12px; color: var(--muted); line-height: 1.5;
+      padding: 22px 16px; text-align: center;
+      font-size: 12px; color: var(--muted); line-height: 1.6;
     }
-    .ref-note {
-      margin: 0 16px; padding: 8px 12px;
-      background: rgba(245,158,11,0.08);
-      border: 1px solid rgba(245,158,11,0.25);
-      border-radius: 10px;
-      font-size: 11px; color: var(--muted); line-height: 1.5;
+    /* Big "next bus" hero inside the live panel */
+    .la-hero {
+      padding: 18px 16px;
+      background: linear-gradient(135deg, #047857, #059669);
+      display: none;
     }
-    .ref-note strong { color: var(--green); }
+    .la-hero.show { display: block; }
+    .la-hero.soon { background: linear-gradient(135deg, #b45309, #ea580c); }
+    .la-hero-label {
+      font-size: 11px; text-transform: uppercase; letter-spacing: 1.3px;
+      opacity: 0.85; margin-bottom: 4px;
+    }
+    .la-hero-num {
+      font-size: 60px; font-weight: 800; letter-spacing: -2px;
+      line-height: 0.95; color: #fff;
+    }
+    .la-hero-num small { font-size: 20px; font-weight: 600; opacity: 0.85; }
+    .la-hero-meta {
+      margin-top: 8px; font-size: 12px; font-weight: 600;
+      display: flex; gap: 8px; flex-wrap: wrap;
+    }
+    .la-hero-chip {
+      background: rgba(0,0,0,0.22); border-radius: 7px;
+      padding: 4px 9px;
+    }
+    .pulse-num { animation: pulseScale 1.4s ease-in-out infinite; }
+    @keyframes pulseScale { 0%,100%{transform:scale(1);} 50%{transform:scale(1.04);} }
 
     .stops-box {
       margin: 12px 16px 0;
@@ -647,12 +666,14 @@
   <div class="trip-summary" id="trip-summary"></div>
 </div>
 
-<!-- 2) Llegadas en vivo a tu parada (lo principal) -->
+<!-- 2) Llegadas en vivo a tu parada — el corazón de la app -->
 <div class="live-arrivals" id="live-arrivals">
   <div class="la-header">
     <span>🛰️ Llegadas en vivo</span>
     <span class="la-sub" id="la-stop-name">—</span>
+    <button class="info-btn" onclick="showInfo()" style="margin-left:auto">ⓘ</button>
   </div>
+  <div class="la-hero" id="la-hero"></div>
   <div class="la-list" id="la-list"></div>
 </div>
 
@@ -666,57 +687,6 @@
   </div>
   <div class="live-badge" id="live-badge"><span class="live-dot"></span> Cargando GPS…</div>
 </div>
-
-<div class="hero" id="hero">
-  <div class="hero-label" id="hero-label">Próximo en</div>
-  <div class="hero-countdown">
-    <div class="hero-num" id="hero-num">—</div>
-    <div class="hero-unit" id="hero-unit"></div>
-  </div>
-  <div class="hero-route">
-    <div class="hero-leg">
-      <div class="hero-leg-time" id="hero-from-time">--:--</div>
-      <div class="hero-leg-name" id="hero-from-name">subo</div>
-    </div>
-    <div class="hero-arrow">→</div>
-    <div class="hero-leg" style="text-align:right">
-      <div class="hero-leg-time" id="hero-to-time">--:--</div>
-      <div class="hero-leg-name" id="hero-to-name">bajo</div>
-    </div>
-  </div>
-  <div class="hero-meta">
-    <div class="hero-chip">🚌 <span id="hero-ramal">—</span></div>
-    <div class="hero-chip">⏱ <span id="hero-dur">—</span> min en bus</div>
-    <div class="hero-chip" id="hero-day">Hoy</div>
-    <button class="hero-chip share-chip" id="share-btn" onclick="shareTrip()">📤 Compartir</button>
-  </div>
-</div>
-
-<div class="action-row">
-  <button class="toggle-stops" id="toggle-stops-btn" onclick="toggleIntermediateStops()">
-    <span id="toggle-stops-icon">📍</span>
-    <span id="toggle-stops-label">Paradas en el camino</span>
-    <span class="toggle-arrow" id="toggle-stops-arrow">▼</span>
-  </button>
-  <a class="realtime-link" href="https://cuandosubo.sube.gob.ar" target="_blank" rel="noopener">
-    🛰️ Tiempo real
-  </a>
-</div>
-<div class="intermediate-list" id="intermediate-list"></div>
-
-<div class="section-head">
-  <div class="section-title">
-    Horario de referencia
-    <small id="window-range">—</small>
-  </div>
-  <button class="info-btn" onclick="showInfo()">ⓘ</button>
-</div>
-<div class="ref-note">
-  📅 Horario programado (GTFS oficial 2019) — usalo de referencia.
-  Lo exacto es lo de <strong>"Llegadas en vivo"</strong> ☝️
-</div>
-
-<div class="feed" id="feed"></div>
 
 <div class="fab" onclick="openSheet('ramales')">
   <span>⚙️ Ramales</span>
@@ -761,21 +731,15 @@
 <div class="modal-bg" id="modal" onclick="if(event.target===this)closeInfo()">
   <div class="modal">
     <h3>🚌 Cómo funciona</h3>
-    <p style="font-size:12px;color:var(--muted);margin-bottom:12px">Datos del feed GTFS oficial de Buenos Aires.</p>
     <ul>
-      <li><strong>Subo en / Bajo en</strong> — elegí cualquier parada del recorrido. Los horarios se calculan según la posición de la parada en cada ramal.</li>
-      <li><strong>195B</strong> — Retiro ↔ La Plata por Autopista. ~97 min terminal a terminal.</li>
-      <li><strong>195C</strong> — Por Autopista (vía Diagonal). El más frecuente en día hábil.</li>
-      <li><strong>195D</strong> — Por Autopista + Av. Circunvalación 72. Pasa por más barrios de La Plata.</li>
+      <li><strong>100% en vivo</strong> — la app usa solo el GPS real de los colectivos (API oficial de Transporte de Buenos Aires, la misma que usa Cuando Subo). No usa horarios viejos.</li>
+      <li><strong>Subo en / Bajo en</strong> — elegí tu parada y la app te muestra qué colectivos 195 se están acercando y en cuántos minutos, calculado con la posición GPS real.</li>
+      <li><strong>El mapa</strong> muestra todos los colectivos 195 moviéndose en tiempo real.</li>
     </ul>
-    <p style="margin-top:12px;font-size:11px;color:var(--amber);line-height:1.5;background:rgba(245,158,11,0.1);padding:8px 10px;border-radius:8px">
-      ⚠️ <strong>Importante:</strong> los horarios salen del GTFS oficial de Buenos Aires,
-      cuya última versión pública es de <strong>2019</strong>. Sirven de referencia
-      (recorridos y frecuencia aproximada) pero las horas exactas pueden haber cambiado.
-    </p>
-    <p style="margin-top:8px;font-size:11px;color:var(--muted);line-height:1.5">
-      Para horarios exactos en tiempo real (GPS de las unidades) usá
-      <a href="https://cuandosubo.sube.gob.ar" target="_blank" style="color:var(--accent-light)">Cuando Subo</a>.
+    <p style="margin-top:12px;font-size:11px;color:var(--muted);line-height:1.5;background:rgba(245,158,11,0.1);padding:8px 10px;border-radius:8px">
+      ℹ️ La cobertura del GPS oficial es buena en Capital y la autopista, pero
+      puede ser más floja del lado de La Plata. Si no aparece ningún colectivo,
+      puede ser falta de señal GPS en esa zona, no que no haya servicio.
     </p>
     <button class="modal-close" onclick="closeInfo()">Entendido</button>
   </div>
@@ -969,69 +933,6 @@ function getDefaultStops() {
   return [origin.id, dest.id];
 }
 
-// ── Trip computation ──
-// For each selected ramal, find trips where BOTH stops exist, and compute times.
-function collect24h() {
-  if (!DATA || !fromStopId || !toStopId) return { trips: [], todayLabel: '', tomorrowLabel: '' };
-  const now = nowMin();
-  const today = new Date();
-  const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate()+1);
-  const todayDt = dayTypeFor(today);
-  const tomDt = dayTypeFor(tomorrow);
-
-  const out = [];
-
-  for (const r of selectedRamales) {
-    const rd = DATA.ramales[r];
-    if (!rd || !rd[currentDir]) continue;
-    const stops = rd[currentDir].stops;
-    const offsets = rd[currentDir].offsets;
-    const fromIdx = stops.indexOf(fromStopId);
-    const toIdx = stops.indexOf(toStopId);
-    if (fromIdx === -1 || toIdx === -1) continue;
-    if (fromIdx >= toIdx) continue; // need from before to in route order
-    const fromOff = offsets[fromIdx];
-    const toOff = offsets[toIdx];
-    const tripDur = toOff - fromOff;
-
-    const todayTrips = (rd[currentDir].trips[todayDt] || rd[currentDir].trips['habil'] || []);
-    for (const dep of todayTrips) {
-      const fromTime = pMin(dep) + fromOff;
-      const diff = fromTime - now;
-      if (diff >= -2) {
-        out.push({
-          ramal: r,
-          fromTime: addMin(dep, fromOff),
-          toTime: addMin(dep, toOff),
-          fromOff, toOff, dur: tripDur,
-          diff, day: 'hoy'
-        });
-      }
-    }
-    const tomTrips = (rd[currentDir].trips[tomDt] || rd[currentDir].trips['habil'] || []);
-    for (const dep of tomTrips) {
-      const fromTime = pMin(dep) + fromOff;
-      const diff = fromTime + 1440 - now;
-      if (diff <= 1440 + 2) {
-        out.push({
-          ramal: r,
-          fromTime: addMin(dep, fromOff),
-          toTime: addMin(dep, toOff),
-          fromOff, toOff, dur: tripDur,
-          diff, day: 'manana'
-        });
-      }
-    }
-  }
-  out.sort((a,b) => a.diff - b.diff);
-
-  return {
-    trips: out,
-    todayLabel: DAY_NAMES[today.getDay()],
-    tomorrowLabel: DAY_NAMES[tomorrow.getDay()],
-  };
-}
-
 // ── Rendering ──
 function shortStopName(name) {
   if (!name) return '—';
@@ -1075,118 +976,6 @@ function renderStopBox() {
     summary.textContent = `🚌 Viaje de ~${minDur} min · ${ramalCount} ramal${ramalCount>1?'es':''} disponible${ramalCount>1?'s':''}`;
     summary.className = 'trip-summary';
   }
-}
-
-function renderHero(trips) {
-  const hero = document.getElementById('hero');
-  const numEl = document.getElementById('hero-num');
-  if (!trips.length) {
-    hero.className = 'hero passed';
-    numEl.textContent = '—';
-    document.getElementById('hero-unit').textContent = '';
-    document.getElementById('hero-label').textContent =
-      (fromStopId && toStopId) ? 'No hay servicios en este recorrido' : 'Elegí origen y destino';
-    document.getElementById('hero-from-time').textContent = '--:--';
-    document.getElementById('hero-to-time').textContent = '--:--';
-    document.getElementById('hero-ramal').textContent = '—';
-    document.getElementById('hero-dur').textContent = '—';
-    document.getElementById('hero-day').textContent = '—';
-    numEl.classList.remove('pulse-time');
-    return;
-  }
-  const n = trips[0];
-  const diff = Math.max(0, Math.round(n.diff));
-
-  hero.className = 'hero';
-  if (diff <= 5) hero.classList.add('very-soon');
-  else if (diff <= 15) hero.classList.add('soon');
-
-  if (diff < 60) {
-    numEl.textContent = diff === 0 ? '¡ya!' : diff;
-    document.getElementById('hero-unit').textContent = diff === 0 ? '' : (diff === 1 ? 'minuto' : 'minutos');
-  } else {
-    const h = Math.floor(diff/60), m = diff%60;
-    numEl.textContent = m === 0 ? `${h}h` : `${h}h${pad2(m)}`;
-    document.getElementById('hero-unit').textContent = '';
-  }
-  if (diff <= 5 && diff > 0) numEl.classList.add('pulse-time');
-  else numEl.classList.remove('pulse-time');
-
-  document.getElementById('hero-label').textContent =
-    n.day === 'manana' ? 'Próximo mañana' :
-    diff === 0 ? '🚌 ¡Pasando ahora!' :
-    diff <= 5 ? '🔥 ¡Ya casi!' :
-    'Pasa por tu parada en';
-  document.getElementById('hero-from-time').textContent = n.fromTime;
-  document.getElementById('hero-to-time').textContent = n.toTime;
-
-  const fromName = DATA.stops[fromStopId]?.name || '';
-  const toName = DATA.stops[toStopId]?.name || '';
-  document.getElementById('hero-from-name').textContent = fromName.replace(/^[🚉🏛️]\s*/, '');
-  document.getElementById('hero-to-name').textContent = toName.replace(/^[🚉🏛️]\s*/, '');
-
-  document.getElementById('hero-ramal').textContent = n.ramal;
-  document.getElementById('hero-dur').textContent = n.dur;
-  document.getElementById('hero-day').textContent = n.day === 'hoy' ? 'Hoy' : 'Mañana';
-}
-
-function renderFeed(data) {
-  const { trips, todayLabel, tomorrowLabel } = data;
-  const feed = document.getElementById('feed');
-  feed.innerHTML = '';
-
-  if (!trips.length) {
-    feed.innerHTML = `
-      <div class="empty">
-        <div class="empty-icon">🌙</div>
-        <div class="empty-text">
-          ${fromStopId && toStopId
-            ? 'Ningún ramal seleccionado cubre este recorrido en las próximas 24h.<br>Probá invertir el sentido o cambiar los ramales.'
-            : 'Elegí origen y destino para ver los horarios.'}
-        </div>
-      </div>`;
-    return;
-  }
-
-  const rest = trips.slice(1);
-  let currentDay = null;
-
-  rest.forEach((t, i) => {
-    if (t.day !== currentDay) {
-      currentDay = t.day;
-      const sep = document.createElement('div');
-      sep.className = 'day-sep';
-      sep.innerHTML = `<span>${t.day === 'hoy' ? `Hoy · ${todayLabel}` : `Mañana · ${tomorrowLabel}`}</span>`;
-      feed.appendChild(sep);
-    }
-
-    const row = document.createElement('div');
-    const diff = Math.round(t.diff);
-    const wc = diff <= 5 ? 'very-soon' : diff <= 15 ? 'soon' : '';
-    row.className = 'trip' + (i === 0 ? ' next' : '');
-    row.innerHTML = `
-      <div class="trip-time">
-        <div class="hh">${t.fromTime}</div>
-        <div class="ramal">${t.ramal.replace('195','')}</div>
-      </div>
-      <div class="trip-info">
-        <div class="trip-arrival">
-          Llegás <span class="arr-time">${t.toTime}</span>
-        </div>
-        <div class="trip-route-small">${t.dur} min en bus · ${RAMAL_INFO[t.ramal].desc}</div>
-      </div>
-      <div class="trip-wait ${wc}">
-        <div class="big">${fmtMin(diff)}</div>
-        <div class="small">faltan</div>
-      </div>
-    `;
-    feed.appendChild(row);
-  });
-
-  const now = new Date();
-  const tom = new Date(now); tom.setDate(tom.getDate()+1);
-  document.getElementById('window-range').textContent =
-    `${pad2(now.getHours())}:${pad2(now.getMinutes())} → ${pad2(tom.getHours())}:${pad2(tom.getMinutes())}`;
 }
 
 // ── Stop picker sheet ──
@@ -1398,43 +1187,6 @@ function swapStops() {
   renderStopBox(); renderMap(); setTimeout(fitMapToRoute, 50); tick();
 }
 
-// ── Share trip ──
-async function shareTrip() {
-  if (!fromStopId || !toStopId || !DATA) return;
-  const data = collect24h();
-  if (!data.trips.length) {
-    alert('No hay servicios para compartir.');
-    return;
-  }
-  const t = data.trips[0];
-  const fromName = DATA.stops[fromStopId].name.replace(/^[🚉🏛️]\s*/, '');
-  const toName = DATA.stops[toStopId].name.replace(/^[🚉🏛️]\s*/, '');
-  const dirLabel = currentDir === 'ida' ? 'Capital → La Plata' : 'La Plata → Capital';
-  const text =
-    `🚌 Línea 195 (${dirLabel})\n` +
-    `Próximo: ${t.fromTime} → ${t.toTime} (${t.dur} min en bus)\n` +
-    `Ramal: ${t.ramal}\n` +
-    `Sube: ${fromName}\n` +
-    `Baja: ${toName}\n\n` +
-    `Ver más: https://linea195.vercel.app`;
-
-  if (navigator.share) {
-    try { await navigator.share({ text, title: 'Línea 195' }); } catch (e) {}
-  } else if (navigator.clipboard) {
-    try {
-      await navigator.clipboard.writeText(text);
-      const btn = document.getElementById('share-btn');
-      if (btn) {
-        const orig = btn.textContent;
-        btn.textContent = '✓ Copiado';
-        setTimeout(() => btn.textContent = orig, 1500);
-      }
-    } catch (e) { alert(text); }
-  } else {
-    alert(text);
-  }
-}
-
 // ── Ramal sheet ──
 function renderRamalSheet() {
   const list = document.getElementById('ramal-list');
@@ -1563,10 +1315,6 @@ function renderMap() {
   const segment = getSegmentStops();
   const segmentSet = new Set(segment || []);
 
-  // Compute next trip once (for per-stop ETA in popups)
-  const data = collect24h();
-  const nextTrip = data.trips[0] || null;
-
   stops.forEach(s => {
     const info = DATA.stops[s.id];
     if (!info || !info.lat || !info.lon) return;
@@ -1584,27 +1332,8 @@ function renderMap() {
       radius, fillColor: color, color: '#ffffff', weight: 2, fillOpacity,
     });
 
-    // Context-aware popup: show estimated pass time if it's in the active segment
-    let timeNote = '';
-    if (nextTrip && (isFrom || isTo || inSegment)) {
-      const ramal = DATA.ramales[nextTrip.ramal];
-      if (ramal && ramal[currentDir]) {
-        const rst = ramal[currentDir].stops;
-        const roff = ramal[currentDir].offsets;
-        const si = rst.indexOf(s.id);
-        const fi = rst.indexOf(fromStopId);
-        if (si !== -1 && fi !== -1) {
-          const fromTimeMin = pMin(nextTrip.fromTime);
-          const stopMin = fromTimeMin + (roff[si] - roff[fi]);
-          const hh = `${pad2(((Math.floor(stopMin/60))%24+24)%24)}:${pad2(((stopMin%60)+60)%60)}`;
-          timeNote = `<div style="font-size:11px;color:#f59e0b;margin:4px 0">Próximo bus ~${hh}</div>`;
-        }
-      }
-    }
-
     const popupHtml = `
       <div class="pop-name">${info.name}</div>
-      ${timeNote}
       <div class="pop-actions">
         <button class="pop-btn from" onclick="setStopFromMap('from','${s.id}')">🟢 Subo acá</button>
         <button class="pop-btn to" onclick="setStopFromMap('to','${s.id}')">🔴 Bajo acá</button>
@@ -1840,42 +1569,62 @@ function liveArrivalsForStop(stopId) {
 function renderLiveArrivals() {
   const panel = document.getElementById('live-arrivals');
   const listEl = document.getElementById('la-list');
+  const heroEl = document.getElementById('la-hero');
   const nameEl = document.getElementById('la-stop-name');
   if (!panel || !DATA) return;
 
+  function hideHero() { heroEl.className = 'la-hero'; heroEl.innerHTML = ''; }
+
   if (!fromStopId) {
     nameEl.textContent = '—';
-    listEl.innerHTML = `<div class="la-empty">Elegí una parada de origen para ver las llegadas.</div>`;
+    hideHero();
+    listEl.innerHTML = `<div class="la-empty">👆 Elegí tu parada arriba para ver los colectivos que se acercan.</div>`;
     return;
   }
   nameEl.textContent = (DATA.stops[fromStopId]?.name || '').replace(/^[🚉🏛️]\s*/, '');
 
   if (!liveUpdated) {
-    listEl.innerHTML = `<div class="la-empty">Cargando GPS de los colectivos…</div>`;
+    hideHero();
+    listEl.innerHTML = `<div class="la-empty">📡 Conectando con el GPS de los colectivos…</div>`;
     return;
   }
 
-  const arrivals = liveArrivalsForStop(fromStopId).slice(0, 6);
+  const arrivals = liveArrivalsForStop(fromStopId);
   if (!arrivals.length) {
+    hideHero();
     listEl.innerHTML = `<div class="la-empty">
-      No hay colectivos en vivo acercándose a esta parada ahora mismo.<br>
-      Mirá la lista de horarios programados más abajo. ⬇️
+      🚫 Ningún colectivo 195 en vivo acercándose a esta parada ahora.<br>
+      <span style="font-size:11px">Puede que no haya GPS en esta zona o que no haya servicio en este momento.</span>
     </div>`;
     return;
   }
 
+  // ── Hero: el próximo colectivo, bien grande ──
+  const next = arrivals[0];
+  heroEl.className = 'la-hero show' + (next.etaMin <= 5 ? ' soon' : '');
+  const distTxt = next.distKm < 1
+    ? `${Math.round(next.distKm * 1000)} m`
+    : `${next.distKm.toFixed(1)} km`;
+  heroEl.innerHTML = `
+    <div class="la-hero-label">Próximo colectivo en</div>
+    <div class="la-hero-num ${next.etaMin <= 5 ? 'pulse-num' : ''}">${next.etaMin}<small> min</small></div>
+    <div class="la-hero-meta">
+      <span class="la-hero-chip">🚌 Ramal ${next.ramal.replace('195','')}</span>
+      <span class="la-hero-chip">📍 a ${distTxt}</span>
+      <span class="la-hero-chip">${next.speed} km/h</span>
+    </div>`;
+
+  // ── Lista: los siguientes ──
   listEl.innerHTML = '';
-  arrivals.forEach(a => {
-    const distTxt = a.distKm < 1
-      ? `${Math.round(a.distKm * 1000)} m`
-      : `${a.distKm.toFixed(1)} km`;
+  arrivals.slice(1, 6).forEach(a => {
+    const dt = a.distKm < 1 ? `${Math.round(a.distKm*1000)} m` : `${a.distKm.toFixed(1)} km`;
     const row = document.createElement('div');
     row.className = 'la-row';
     row.innerHTML = `
       <div class="la-ramal">${a.ramal.replace('195','')}</div>
       <div class="la-info">
         <div class="la-eta">${a.etaMin} <small>min</small></div>
-        <div class="la-dist">a ${distTxt} · ${a.speed} km/h</div>
+        <div class="la-dist">a ${dt} · ${a.speed} km/h</div>
       </div>
       <div class="la-live"><span class="live-dot"></span>EN VIVO</div>
     `;
@@ -1905,86 +1654,9 @@ function updateClock() {
 function tick() {
   updateClock();
   savePrefs(); // persist on every tick (cheap)
-  const data = collect24h();
-  renderHero(data.trips);
-  renderFeed(data);
-  renderIntermediateStops(data.trips);
-  // Refrescar info en vivo con los datos ya cacheados (sin red)
+  // App 100% en vivo — solo datos del API de GPS, nada del horario 2019.
   if (liveUpdated) { renderLiveBadge(); renderLiveBuses(); }
   renderLiveArrivals();
-}
-
-// ── Intermediate stops along the route ──
-let intermediateOpen = false;
-
-function toggleIntermediateStops() {
-  intermediateOpen = !intermediateOpen;
-  const btn = document.getElementById('toggle-stops-btn');
-  const list = document.getElementById('intermediate-list');
-  const lbl = document.getElementById('toggle-stops-label');
-  btn.className = 'toggle-stops' + (intermediateOpen ? ' open' : '');
-  list.className = 'intermediate-list' + (intermediateOpen ? ' open' : '');
-  lbl.textContent = intermediateOpen ? 'Ocultar paradas en el camino' : 'Ver paradas en el camino';
-  // Re-render immediately to show stops without waiting for next tick
-  const data = collect24h();
-  renderIntermediateStops(data.trips);
-}
-
-function renderIntermediateStops(trips) {
-  const list = document.getElementById('intermediate-list');
-  const btn = document.getElementById('toggle-stops-btn');
-
-  // Hide entire toggle if we have no valid trip
-  if (!trips.length || !fromStopId || !toStopId) {
-    btn.style.display = 'none';
-    list.innerHTML = '';
-    return;
-  }
-  btn.style.display = '';
-
-  if (!intermediateOpen) {
-    list.innerHTML = '';
-    return;
-  }
-
-  const next = trips[0];
-  const ramal = DATA.ramales[next.ramal];
-  if (!ramal || !ramal[currentDir]) { list.innerHTML = ''; return; }
-
-  const stops = ramal[currentDir].stops;
-  const offsets = ramal[currentDir].offsets;
-  const fromIdx = stops.indexOf(fromStopId);
-  const toIdx = stops.indexOf(toStopId);
-  if (fromIdx === -1 || toIdx === -1 || fromIdx >= toIdx) {
-    list.innerHTML = '';
-    return;
-  }
-
-  // Compute trip's first-stop departure time so we can apply offsets
-  const fromOffset = offsets[fromIdx];
-  const fromTimeMin = pMin(next.fromTime);
-  const firstDepMin = fromTimeMin - fromOffset;
-
-  list.innerHTML = '';
-  for (let i = fromIdx; i <= toIdx; i++) {
-    const sid = stops[i];
-    const name = DATA.stops[sid]?.name || sid;
-    const arrMin = firstDepMin + offsets[i];
-    const arrHHMM = `${pad2(((Math.floor(arrMin/60)) % 24 + 24) % 24)}:${pad2(((arrMin % 60) + 60) % 60)}`;
-    const isFrom = i === fromIdx;
-    const isTo = i === toIdx;
-    const cls = isFrom ? 'from' : isTo ? 'to' : '';
-    const offFromUser = offsets[i] - fromOffset;
-    const meta = isFrom ? ' (subo)' : isTo ? ' (bajo)' : ` <small>+${offFromUser}min</small>`;
-    const row = document.createElement('div');
-    row.className = 'interm-row ' + cls;
-    row.innerHTML = `
-      <div class="interm-marker"></div>
-      <div class="interm-name">${name}${meta}</div>
-      <div class="interm-time">${arrHHMM}</div>
-    `;
-    list.appendChild(row);
-  }
 }
 
 // ── Hard reset utility ──
