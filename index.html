@@ -784,6 +784,38 @@ let liveBuses = [];       // last fetched bus list
 let liveUpdated = 0;      // timestamp of last successful fetch
 let liveLayerOn = true;   // show buses on map
 
+// ── Corredor real (geometría del recorrido Retiro→Autopista→Hudson→Centenario→La Plata) ──
+let CORRIDOR = null;        // { ida: [[lat,lon],...], vuelta: [...] }
+let corridorCum = {};       // { ida: [km acumulados], vuelta: [...] }
+const CORRIDOR_TOL_KM = 0.6;    // un colectivo a <600m del recorrido = está en la 195 autopista
+const AVG_KMH = 32;             // velocidad media efectiva del recorrido (con tráfico/paradas)
+
+function buildCorridorIndex() {
+  if (!CORRIDOR) return;
+  for (const dir of ['ida','vuelta']) {
+    const pts = CORRIDOR[dir];
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) {
+      cum.push(cum[i-1] + haversine(pts[i-1][0], pts[i-1][1], pts[i][0], pts[i][1]));
+    }
+    corridorCum[dir] = cum;
+  }
+}
+
+// Proyecta un punto sobre el corredor del sentido actual.
+// Devuelve { alongKm: distancia desde el inicio, offKm: distancia perpendicular al recorrido }
+function projectOnCorridor(lat, lon, dir) {
+  const pts = CORRIDOR && CORRIDOR[dir];
+  const cum = corridorCum[dir];
+  if (!pts || !cum) return null;
+  let bestOff = Infinity, bestAlong = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const d = haversine(lat, lon, pts[i][0], pts[i][1]);
+    if (d < bestOff) { bestOff = d; bestAlong = cum[i]; }
+  }
+  return { alongKm: bestAlong, offKm: bestOff };
+}
+
 // ── Persistence (localStorage) ──
 const STORAGE_KEY = 'linea195-prefs-v3';
 function savePrefs() {
@@ -1346,23 +1378,16 @@ function renderMap() {
   });
 
   routeLine = [];
-  // Faint full route
-  if (fullLatLngs.length >= 2) {
-    routeLine.push(L.polyline(fullLatLngs, {
-      color: '#3b82f6', weight: 2, opacity: 0.25,
+  // Recorrido real de la autopista (geometría del corredor)
+  if (CORRIDOR && CORRIDOR[currentDir] && CORRIDOR[currentDir].length >= 2) {
+    routeLine.push(L.polyline(CORRIDOR[currentDir], {
+      color: '#60a5fa', weight: 4, opacity: 0.8,
     }).addTo(map));
-  }
-  // Bold highlighted segment (the actual trip)
-  if (segment && segment.length >= 2) {
-    const segLatLngs = segment
-      .map(sid => DATA.stops[sid])
-      .filter(i => i && i.lat && i.lon)
-      .map(i => [i.lat, i.lon]);
-    if (segLatLngs.length >= 2) {
-      routeLine.push(L.polyline(segLatLngs, {
-        color: '#60a5fa', weight: 5, opacity: 0.9,
-      }).addTo(map));
-    }
+  } else if (fullLatLngs.length >= 2) {
+    // fallback: unir paradas si todavía no cargó el corredor
+    routeLine.push(L.polyline(fullLatLngs, {
+      color: '#3b82f6', weight: 2, opacity: 0.3,
+    }).addTo(map));
   }
 }
 
@@ -1461,8 +1486,12 @@ async function fetchLiveBuses() {
 function renderLiveBuses() {
   if (!map || !liveLayerOn) return;
 
-  // Mostramos TODOS los colectivos 195 (el tag de ramal del feed no es fiable)
-  const shown = liveBuses;
+  // Solo los colectivos que van por la AUTOPISTA (sobre el corredor real).
+  // Esto descarta los que andan por Av. Mitre / otras calles.
+  const shown = liveBuses.filter(b => {
+    if (!CORRIDOR) return true;       // sin corredor cargado, mostrar todo
+    return busOnCorridor(b, 'ida') || busOnCorridor(b, 'vuelta');
+  });
   const seenIds = new Set();
 
   shown.forEach(b => {
@@ -1482,9 +1511,10 @@ function renderLiveBuses() {
       m.addTo(map);
       busMarkers[b.id] = m;
     }
+    const dirTxt = Number(b.dir) === 1 ? 'hacia Capital' : 'hacia La Plata';
     busMarkers[b.id].bindPopup(
-      `<div class="pop-name">🚌 Colectivo ${b.ramal}</div>
-       <div style="font-size:11px;color:#8aa0c2">Velocidad: ${b.speed} km/h</div>
+      `<div class="pop-name">🚌 Colectivo 195</div>
+       <div style="font-size:11px;color:#8aa0c2">${dirTxt} · ${b.speed} km/h</div>
        <div style="font-size:11px;color:#10b981;margin-top:2px">● En vivo (GPS)</div>`
     );
   });
@@ -1506,10 +1536,12 @@ function renderLiveBadge(failed) {
     el.className = 'live-badge off';
     return;
   }
-  const shown = liveBuses;
+  const shown = CORRIDOR
+    ? liveBuses.filter(b => busOnCorridor(b, 'ida') || busOnCorridor(b, 'vuelta'))
+    : liveBuses;
   const ageSec = Math.round((Date.now() - liveUpdated) / 1000);
   const ageTxt = ageSec < 60 ? `hace ${ageSec}s` : `hace ${Math.round(ageSec/60)}min`;
-  el.innerHTML = `<span class="live-dot"></span> ${shown.length} en vivo · ${ageTxt}`;
+  el.innerHTML = `<span class="live-dot"></span> ${shown.length} en autopista · ${ageTxt}`;
   el.className = 'live-badge';
 }
 
@@ -1517,50 +1549,41 @@ function renderLiveBadge(failed) {
 // que esté ANTES de la parada (aproximándose) y estima el tiempo.
 // Calcula los colectivos en vivo que se están acercando a una parada,
 // con ETA estimada usando la posición GPS sobre el recorrido.
+// Determina si un colectivo está EN el corredor autopista (no en otra ruta).
+function busOnCorridor(b, dir) {
+  if (typeof b.lat !== 'number' || typeof b.lon !== 'number') return null;
+  const proj = projectOnCorridor(b.lat, b.lon, dir);
+  if (!proj || proj.offKm > CORRIDOR_TOL_KM) return null;
+  return proj;
+}
+
 function liveArrivalsForStop(stopId) {
-  if (!DATA || !stopId || !liveBuses.length) return [];
+  if (!DATA || !stopId || !liveBuses.length || !CORRIDOR) return [];
   const wantDir = currentDir === 'ida' ? 0 : 1;
 
-  // Recorrido de referencia: el ramal (en este sentido) con más paradas
-  // que incluya esta parada. Sirve de "regla" para ubicar a los colectivos.
-  let refStops = null, refOffsets = null, refOi = -1;
-  for (const r of Object.keys(DATA.ramales)) {
-    const rd = DATA.ramales[r];
-    if (!rd || !rd[currentDir]) continue;
-    const oi = rd[currentDir].stops.indexOf(stopId);
-    if (oi === -1) continue;
-    if (!refStops || rd[currentDir].stops.length > refStops.length) {
-      refStops = rd[currentDir].stops;
-      refOffsets = rd[currentDir].offsets;
-      refOi = oi;
-    }
-  }
-  if (!refStops) return [];
+  // Ubicar la parada del usuario sobre el corredor real
+  const st = DATA.stops[stopId];
+  if (!st) return [];
+  const stopProj = projectOnCorridor(st.lat, st.lon, currentDir);
+  if (!stopProj || stopProj.offKm > 1.2) return [];  // la parada no está sobre la autopista
 
   const arrivals = [];
   for (const b of liveBuses) {
-    if (typeof b.lat !== 'number' || typeof b.lon !== 'number') continue;
-    // Solo colectivos que van en TU sentido (el ramal del feed no es fiable,
-    // pero el campo direction sí lo es)
+    // Solo colectivos en TU sentido
     if (b.dir !== undefined && b.dir !== null && Number(b.dir) !== wantDir) continue;
+    // Solo colectivos que van por la AUTOPISTA (descarta el ramal por Av. Mitre)
+    const bp = busOnCorridor(b, currentDir);
+    if (!bp) continue;
 
-    // Parada del recorrido de referencia más cercana al colectivo
-    let nearIdx = -1, nearKm = Infinity;
-    refStops.forEach((sid, i) => {
-      const si = DATA.stops[sid];
-      if (!si) return;
-      const km = haversine(b.lat, b.lon, si.lat, si.lon);
-      if (km < nearKm) { nearKm = km; nearIdx = i; }
-    });
+    const remainKm = stopProj.alongKm - bp.alongKm;
+    if (remainKm <= 0.2) continue;       // ya pasó tu parada
+    if (remainKm > 58) continue;         // demasiado lejos
 
-    if (nearKm > 2.5) continue;        // no está sobre este corredor
-    if (nearIdx >= refOi) continue;    // ya pasó tu parada
+    // ETA por distancia real sobre el recorrido (no depende del speed instantáneo)
+    const etaMin = Math.max(1, Math.round(remainKm / AVG_KMH * 60));
+    if (etaMin > 110) continue;
 
-    const etaMin = refOffsets[refOi] - refOffsets[nearIdx];
-    if (etaMin <= 0 || etaMin > 90) continue;
-
-    const distKm = haversine(b.lat, b.lon, DATA.stops[stopId].lat, DATA.stops[stopId].lon);
-    arrivals.push({ ramal: b.ramal, etaMin, distKm, busId: b.id, speed: b.speed });
+    arrivals.push({ ramal: b.ramal, etaMin, distKm: remainKm, busId: b.id, speed: b.speed });
   }
   arrivals.sort((a, b) => a.etaMin - b.etaMin);
   return arrivals;
@@ -1603,15 +1626,14 @@ function renderLiveArrivals() {
   const next = arrivals[0];
   heroEl.className = 'la-hero show' + (next.etaMin <= 5 ? ' soon' : '');
   const distTxt = next.distKm < 1
-    ? `${Math.round(next.distKm * 1000)} m`
-    : `${next.distKm.toFixed(1)} km`;
+    ? `${Math.round(next.distKm * 1000)} m por recorrido`
+    : `${next.distKm.toFixed(1)} km por recorrido`;
   heroEl.innerHTML = `
     <div class="la-hero-label">Próximo colectivo en</div>
     <div class="la-hero-num ${next.etaMin <= 5 ? 'pulse-num' : ''}">${next.etaMin}<small> min</small></div>
     <div class="la-hero-meta">
-      <span class="la-hero-chip">🚌 Ramal ${next.ramal.replace('195','')}</span>
+      <span class="la-hero-chip">🚌 Línea 195</span>
       <span class="la-hero-chip">📍 a ${distTxt}</span>
-      <span class="la-hero-chip">${next.speed} km/h</span>
     </div>`;
 
   // ── Lista: los siguientes ──
@@ -1621,10 +1643,10 @@ function renderLiveArrivals() {
     const row = document.createElement('div');
     row.className = 'la-row';
     row.innerHTML = `
-      <div class="la-ramal">${a.ramal.replace('195','')}</div>
+      <div class="la-ramal">195</div>
       <div class="la-info">
         <div class="la-eta">${a.etaMin} <small>min</small></div>
-        <div class="la-dist">a ${dt} · ${a.speed} km/h</div>
+        <div class="la-dist">a ${dt} de tu parada</div>
       </div>
       <div class="la-live"><span class="live-dot"></span>EN VIVO</div>
     `;
@@ -1722,6 +1744,19 @@ fetch('stops.json?v=' + Date.now())  // cache bust to avoid stale data
     }
 
     document.getElementById('fab-count').textContent = selectedRamales.size;
+
+    // Cargar el corredor real (geometría del recorrido autopista)
+    fetch('corridor.json?v=' + Date.now())
+      .then(r => r.ok ? r.json() : null)
+      .then(c => {
+        if (c && c.ida && c.vuelta) {
+          CORRIDOR = c;
+          buildCorridorIndex();
+          if (map) { renderMap(); renderLiveBuses(); }
+          renderLiveArrivals();
+        }
+      })
+      .catch(() => {});
 
     // Initialize map (may need a microtask for Leaflet to be ready)
     if (typeof L !== 'undefined') {
