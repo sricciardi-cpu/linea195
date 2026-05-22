@@ -787,7 +787,7 @@ let liveLayerOn = true;   // show buses on map
 // ── Corredor real (geometría del recorrido Retiro→Autopista→Hudson→Centenario→La Plata) ──
 let CORRIDOR = null;        // { ida: [[lat,lon],...], vuelta: [...] }
 let corridorCum = {};       // { ida: [km acumulados], vuelta: [...] }
-const CORRIDOR_TOL_KM = 0.6;    // un colectivo a <600m del recorrido = está en la 195 autopista
+const CORRIDOR_TOL_KM = 1.0;    // un colectivo a <1km del recorrido = está en la ruta 195
 const AVG_KMH = 32;             // velocidad media efectiva del recorrido (con tráfico/paradas)
 
 function buildCorridorIndex() {

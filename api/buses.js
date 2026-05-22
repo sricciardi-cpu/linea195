@@ -15,25 +15,36 @@ export default async function handler(req, res) {
 
   const url = `${API_BASE}/vehiclePositionsSimple?client_id=${CID}&client_secret=${CS}`;
 
-  // La API a veces tira 500 (SSLHandshakeException en su proxy). Reintentamos.
+  // La API es inestable: a veces tira 500 (SSLHandshakeException en su proxy)
+  // y a veces devuelve un dataset PARCIAL (1000-2000 vehículos en vez de ~7000).
+  // Reintentamos hasta conseguir una respuesta razonablemente completa.
   let data = null;
+  let best = null;
   let lastErr = '';
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < 6; attempt++) {
     try {
-      const r = await fetch(url, { signal: AbortSignal.timeout(20000) });
+      const r = await fetch(url, { signal: AbortSignal.timeout(12000) });
       if (r.ok) {
         const json = await r.json();
-        if (Array.isArray(json)) { data = json; break; }
-        lastErr = 'respuesta no es lista';
+        if (Array.isArray(json)) {
+          // Guardamos la mejor respuesta vista hasta ahora
+          if (!best || json.length > best.length) best = json;
+          // Aceptamos si parece completa (>4000 vehículos)
+          if (json.length > 4000) { data = json; break; }
+          lastErr = `respuesta parcial (${json.length})`;
+        } else {
+          lastErr = 'respuesta no es lista';
+        }
       } else {
         lastErr = `HTTP ${r.status}`;
       }
     } catch (e) {
       lastErr = e.message || 'fetch error';
     }
-    // backoff
-    await new Promise(r => setTimeout(r, 600 + attempt * 400));
+    await new Promise(r => setTimeout(r, 500 + attempt * 300));
   }
+  // Si nunca conseguimos una completa, usamos la mejor parcial que haya
+  if (!data) data = best;
 
   if (!data) {
     res.status(502).json({ error: 'API de transporte no disponible', detail: lastErr });
@@ -63,6 +74,7 @@ export default async function handler(req, res) {
   res.status(200).json({
     ok: true,
     count: buses.length,
+    fleetSize: data.length,   // total vehículos en el feed (para detectar respuestas parciales)
     updated: Math.floor(Date.now() / 1000),
     buses,
   });
