@@ -250,6 +250,48 @@
     .pulse-num { animation: pulseScale 1.4s ease-in-out infinite; }
     @keyframes pulseScale { 0%,100%{transform:scale(1);} 50%{transform:scale(1.04);} }
 
+    /* ── Confianza del ETA según señal GPS (estilo Moovit) ── */
+    /* Hero: el fondo cambia según la confianza */
+    .la-hero.conf-green  { background: linear-gradient(135deg, #047857, #059669); }
+    .la-hero.conf-yellow { background: linear-gradient(135deg, #a16207, #ca8a04); }
+    .la-hero.conf-red    { background: linear-gradient(135deg, #b91c1c, #dc2626); }
+    .la-hero.conf-gray   { background: linear-gradient(135deg, #475569, #334155); }
+    /* soon (≤5min) tiene prioridad solo en verde */
+    .la-hero.conf-green.soon { background: linear-gradient(135deg, #b45309, #ea580c); }
+
+    /* Texto del ETA en la lista */
+    .la-eta.conf-green  { color: #10b981; }
+    .la-eta.conf-yellow { color: #eab308; }
+    .la-eta.conf-red    { color: #ef4444; }
+    .la-eta.conf-gray   { color: var(--text); }
+
+    .la-live.conf-green  { color: #10b981; }
+    .la-live.conf-yellow { color: #eab308; }
+    .la-live.conf-red    { color: #ef4444; }
+    .la-live.conf-gray   { color: var(--muted); }
+    .live-dot.conf-green  { background: #10b981; }
+    .live-dot.conf-yellow { background: #eab308; }
+    .live-dot.conf-red    { background: #ef4444; }
+    .live-dot.conf-gray   { background: var(--muted); }
+
+    .conf-chip.conf-green  { background: rgba(0,0,0,0.28); }
+    .conf-chip.conf-yellow { background: rgba(0,0,0,0.28); }
+    .conf-chip.conf-red    { background: rgba(0,0,0,0.3); }
+
+    /* Leyenda de colores */
+    .la-legend {
+      display: flex; gap: 14px; justify-content: center;
+      padding: 9px 14px; border-top: 1px solid var(--border);
+      font-size: 10px; color: var(--muted);
+    }
+    .la-legend span { display: flex; align-items: center; gap: 4px; }
+    .dot-leg {
+      width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+    }
+    .dot-leg.conf-green  { background: #10b981; }
+    .dot-leg.conf-yellow { background: #eab308; }
+    .dot-leg.conf-red    { background: #ef4444; }
+
     .stops-box {
       margin: 12px 16px 0;
       background: var(--surface); border: 1px solid var(--border);
@@ -1583,11 +1625,32 @@ function liveArrivalsForStop(stopId) {
     const etaMin = Math.max(1, Math.round(remainKm / AVG_KMH * 60));
     if (etaMin > 110) continue;
 
-    arrivals.push({ ramal: b.ramal, etaMin, distKm: remainKm, busId: b.id, speed: b.speed });
+    // Antigüedad de la señal GPS (en segundos) — para el color de confianza
+    const nowSec = Date.now() / 1000;
+    const gpsAge = (b.ts && b.ts > 1e9) ? Math.max(0, nowSec - b.ts) : null;
+
+    arrivals.push({
+      ramal: b.ramal, etaMin, distKm: remainKm, busId: b.id,
+      speed: b.speed, gpsAge,
+    });
   }
   arrivals.sort((a, b) => a.etaMin - b.etaMin);
   return arrivals;
 }
+
+// Nivel de confianza del ETA según la frescura de la señal GPS (estilo Moovit).
+function etaConfidence(gpsAgeSec) {
+  if (gpsAgeSec == null || !isFinite(gpsAgeSec)) return 'gray';
+  if (gpsAgeSec < 150) return 'green';   // GPS fresco (<2.5min) → preciso
+  if (gpsAgeSec < 420) return 'yellow';  // GPS espaciado (2.5-7min) → bastante preciso
+  return 'red';                          // GPS viejo (>7min) → poco confiable
+}
+const CONF_LABEL = {
+  green:  'Señal GPS fuerte — ETA preciso',
+  yellow: 'Señal GPS espaciada — ETA aproximado',
+  red:    'Señal GPS débil — ETA poco confiable',
+  gray:   'Sin dato de antigüedad de la señal',
+};
 
 function renderLiveArrivals() {
   const panel = document.getElementById('live-arrivals');
@@ -1624,34 +1687,50 @@ function renderLiveArrivals() {
 
   // ── Hero: el próximo colectivo, bien grande ──
   const next = arrivals[0];
-  heroEl.className = 'la-hero show' + (next.etaMin <= 5 ? ' soon' : '');
+  const conf = etaConfidence(next.gpsAge);
+  heroEl.className = `la-hero show conf-${conf}` + (next.etaMin <= 5 ? ' soon' : '');
   const distTxt = next.distKm < 1
     ? `${Math.round(next.distKm * 1000)} m por recorrido`
     : `${next.distKm.toFixed(1)} km por recorrido`;
+  const ageTxt = next.gpsAge != null ? `señal hace ${Math.round(next.gpsAge)}s` : 'señal s/d';
   heroEl.innerHTML = `
     <div class="la-hero-label">Próximo colectivo en</div>
     <div class="la-hero-num ${next.etaMin <= 5 ? 'pulse-num' : ''}">${next.etaMin}<small> min</small></div>
     <div class="la-hero-meta">
-      <span class="la-hero-chip">🚌 Línea 195</span>
+      <span class="la-hero-chip conf-chip conf-${conf}">${CONF_LABEL[conf]}</span>
       <span class="la-hero-chip">📍 a ${distTxt}</span>
+      <span class="la-hero-chip">🛰️ ${ageTxt}</span>
     </div>`;
 
   // ── Lista: los siguientes ──
   listEl.innerHTML = '';
   arrivals.slice(1, 6).forEach(a => {
     const dt = a.distKm < 1 ? `${Math.round(a.distKm*1000)} m` : `${a.distKm.toFixed(1)} km`;
+    const c = etaConfidence(a.gpsAge);
     const row = document.createElement('div');
     row.className = 'la-row';
     row.innerHTML = `
       <div class="la-ramal">195</div>
       <div class="la-info">
-        <div class="la-eta">${a.etaMin} <small>min</small></div>
+        <div class="la-eta conf-${c}">${a.etaMin} <small>min</small></div>
         <div class="la-dist">a ${dt} de tu parada</div>
       </div>
-      <div class="la-live"><span class="live-dot"></span>EN VIVO</div>
+      <div class="la-live conf-${c}"><span class="live-dot conf-${c}"></span>${
+        c === 'green' ? 'EN VIVO' : c === 'yellow' ? 'APROX.' : c === 'red' ? 'DUDOSO' : 'EN VIVO'
+      }</div>
     `;
     listEl.appendChild(row);
   });
+
+  // ── Leyenda de colores (estilo Moovit) ──
+  const legend = document.createElement('div');
+  legend.className = 'la-legend';
+  legend.innerHTML = `
+    <span><span class="dot-leg conf-green"></span>preciso</span>
+    <span><span class="dot-leg conf-yellow"></span>aproximado</span>
+    <span><span class="dot-leg conf-red"></span>poco confiable</span>
+  `;
+  listEl.appendChild(legend);
 }
 
 function toggleLiveLayer() {
